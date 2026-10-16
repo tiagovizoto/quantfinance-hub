@@ -2,6 +2,41 @@
 
 Gestão financeira pessoal + análise quantitativa sobre dados do Open Finance (Pluggy / MeuPluggy).
 
+> As imagens abaixo usam **dados fictícios** de demonstração.
+
+![Visão geral](docs/screenshots/01-visao-geral.png)
+
+## Telas
+
+### Explorar os gastos
+Do período à categoria, ao estabelecimento e ao dia.
+
+![Explorar os gastos](docs/screenshots/03-explorar.png)
+
+### A rede do dinheiro
+Grafo interativo: receita → conta → categoria → estabelecimento. Passe o mouse para ver o caminho do dinheiro; clique para fixar; arraste para reorganizar.
+
+![Rede do dinheiro](docs/screenshots/04-rede-do-dinheiro.png)
+
+### Da renda ao que sobrou, e concentração
+![Cascata da renda](docs/screenshots/05-cascata-renda.png)
+![Pareto](docs/screenshots/06-pareto.png)
+
+### Para onde foi o dinheiro no ano
+![Para onde foi](docs/screenshots/02-para-onde-foi.png)
+
+### Caixa: os próximos dias
+Saldo previsto com faixa de incerteza, ritmo do mês e parcelados no cartão.
+
+![Caixa](docs/screenshots/07-caixa.png)
+
+### Carteira e patrimônio
+![Carteira](docs/screenshots/08-carteira.png)
+
+### Plano de quitação
+![Cascata de dívidas](docs/screenshots/09-cascata-dividas.png)
+![Juros x principal](docs/screenshots/10-juros-x-principal.png)
+
 ## Estrutura
 
 ```
