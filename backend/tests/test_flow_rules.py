@@ -220,3 +220,10 @@ async def test_loan_proceeds_and_future_installments_do_not_count(
     )
     assert flows["income"].sum() == 0 and flows["expense"].sum() == 100
     assert (flows["reason"] == "emprestimo").sum() == 1
+
+
+async def test_salary_account_transfer_counts_as_income(session: AsyncSession, bank_id: str) -> None:
+    tx(session, bank_id, 1, 3900, "CREDIT", "Transfers", "TRANSF SALDO C/SAL P/CC - BCO 237 AGE 03286 CTA 0123686-5")
+    await session.commit()
+    flows = await QuantEngine(session)._load_flows(datetime(2026, 10, 1), datetime(2026, 11, 1))
+    assert flows["income"].sum() == 3900 and (flows["reason"] != "").sum() == 0

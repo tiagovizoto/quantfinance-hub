@@ -24,7 +24,6 @@ CARD_MARKERS: Final = (
 OWN_TRANSFER_MARKERS: Final = (
     "same person transfer",
     "mesma titularidade",
-    "transf saldo c",
 )
 # Aplicação e resgate: o dinheiro só passa para (ou volta de) um investimento, que já está no patrimônio.
 INVESTMENT_MARKERS: Final = ("aplicacao", "resgate", "aplic financ", "resg ")
