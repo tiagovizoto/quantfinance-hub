@@ -76,6 +76,7 @@ pip install -r requirements.txt
 cp .env.example .env                                  # preencha PLUGGY_CLIENT_ID/SECRET/ITEM_ID (vários itens: separados por vírgula)
 alembic upgrade head
 uvicorn app.main:app --reload                         # API em http://localhost:8000/docs
+# alternativas equivalentes: python main.py  |  python app/main.py  |  python -m app.main
 
 # sincronização via CLI (incremental; --full reimporta todo o histórico)
 python -m app.services.pluggy_service            # sincroniza todos os itens de PLUGGY_ITEM_ID

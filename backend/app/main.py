@@ -1,3 +1,9 @@
+import sys
+from pathlib import Path
+
+if __package__ in (None, ""):  # `python app/main.py`: sem isto, o Python não encontra o pacote `app`
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -34,3 +40,14 @@ app.include_router(importer.router, prefix="/api/v1")
 @app.get("/health", tags=["infra"])
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+def run() -> None:
+    """Sobe a API em http://127.0.0.1:8000 (docs em /docs). Equivale a `uvicorn app.main:app --reload`."""
+    import uvicorn
+
+    uvicorn.run("app.main:app", host="127.0.0.1", port=8000, reload=True)
+
+
+if __name__ == "__main__":
+    run()
