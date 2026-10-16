@@ -20,6 +20,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
 from typing import Any, Final
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 from sqlalchemy import func, select, update
@@ -58,6 +59,21 @@ class PluggyAPIError(PluggyError):
         self.status_code = status_code
         self.message = message
         self.path = path
+
+
+def _cursor_from_next(next_url: Any) -> str | None:
+    """O ``next`` da Pluggy é uma URL (ou, por garantia, o próprio cursor); o cursor é o parâmetro ``after``."""
+    if not next_url or not isinstance(next_url, str):
+        return None
+    query = parse_qs(urlsplit(next_url).query)
+    if "after" in query:
+        return query["after"][0]
+    return None if "/" in next_url or "?" in next_url else next_url
+
+
+# Nome do filtro de data inicial em /v2/transactions (a documentação do SDK usa dateFrom; mantemos
+# `from`, o nome antigo, como alternativa caso a API recuse o primeiro).
+_DATE_FROM_PARAMS: Final = ("dateFrom", "from")
 
 
 # ---------------------------------------------------------------------------
@@ -248,6 +264,23 @@ class PluggyClient:
             if not results or page >= int(payload.get("totalPages") or 1):
                 return
             page += 1
+
+    async def iter_cursor_pages(
+        self, path: str, params: Mapping[str, Any] | None = None
+    ) -> AsyncIterator[list[JsonDict]]:
+        """Paginação por cursor (``GET /v2/...``): ``results`` + ``next`` (URL cujo ``after`` é o cursor)."""
+        query: JsonDict = dict(params or {})
+        while True:
+            payload = await self.request("GET", path, params=query)
+            if isinstance(payload, list):
+                yield payload
+                return
+            results: list[JsonDict] = payload.get("results") or []
+            yield results
+            cursor = _cursor_from_next(payload.get("next"))
+            if not results or not cursor or cursor == query.get("after"):
+                return
+            query["after"] = cursor
 
     async def fetch_all(
         self, path: str, params: Mapping[str, Any] | None = None, *, page_size: int | None = None
@@ -673,17 +706,11 @@ class PluggySyncService:
     ) -> None:
         for account in accounts:
             start = None if full_history else await self._incremental_start(session, account.id)
-            params: JsonDict = {"accountId": account.id}
-            if start is not None:
-                params["from"] = start.isoformat()
-
             known_bills = set(
                 await session.scalars(select(Bill.id).where(Bill.account_id == account.id))
             )
             try:
-                async for page in self._client.iter_pages(
-                    "/transactions", params, page_size=_TRANSACTIONS_PAGE_SIZE
-                ):
+                async for page in self._transaction_pages(account.id, start):
                     rows = [
                         row
                         for raw in page
@@ -694,6 +721,27 @@ class PluggySyncService:
             except PluggyAPIError as exc:
                 await session.rollback()
                 self._soft_fail(result, "transações", account.id, exc)
+
+    async def _transaction_pages(
+        self, account_id: str, start: date | None
+    ) -> AsyncIterator[list[JsonDict]]:
+        """Páginas de ``GET /v2/transactions``; se a API recusar o nome do filtro de data, tenta o outro."""
+        names = _DATE_FROM_PARAMS if start is not None else (None,)
+        for position, name in enumerate(names):
+            params: JsonDict = {"accountId": account_id}
+            if name is not None and start is not None:
+                params[name] = start.isoformat()
+            started = False
+            try:
+                async for page in self._client.iter_cursor_pages("/v2/transactions", params):
+                    started = True
+                    yield page
+            except PluggyAPIError as exc:
+                if exc.status_code == 400 and not started and position < len(names) - 1:
+                    logger.warning("Filtro %s recusado em /v2/transactions; tentando %s", name, names[position + 1])
+                    continue
+                raise
+            return
 
     async def _sync_investments(
         self, session: AsyncSession, item_id: str, result: SyncResult
