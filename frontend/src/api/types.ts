@@ -186,6 +186,17 @@ export interface DebtPoint {
   snowball: number;
 }
 
+export interface CostPoint {
+  month: number;
+  on: string;
+  baseline_interest: number;
+  baseline_principal: number;
+  avalanche_interest: number;
+  avalanche_principal: number;
+  snowball_interest: number;
+  snowball_principal: number;
+}
+
 export interface TimelinePoint {
   month: number;
   on: string;
@@ -204,7 +215,78 @@ export interface LoanStrategyResponse {
   strategies: StrategyResult[];
   best_strategy: "avalanche" | "snowball" | null;
   debt_curve: DebtPoint[];
+  cost_curve: CostPoint[];
   timeline: TimelinePoint[];
+  warnings: string[];
+}
+
+export interface SpendMerchant {
+  name: string;
+  total: number;
+  count: number;
+  share: number | null;
+}
+
+export interface SpendTransaction {
+  id: string;
+  date: string; // AAAA-MM-DD
+  description: string;
+  category: string;
+  account: string;
+  amount: number;
+}
+
+export interface SpendCategory {
+  category: string;
+  total: number;
+  share: number | null;
+  count: number;
+  average: number;
+  monthly: number[]; // 12 valores do ano inteiro
+  merchants: SpendMerchant[];
+  top_transactions: SpendTransaction[];
+}
+
+export interface SpendDay {
+  date: string;
+  expense: number;
+  count: number;
+}
+
+export interface SpendWeekday {
+  weekday: number; // 0 = segunda
+  label: string;
+  total: number;
+  count: number;
+  average_per_day: number;
+}
+
+export interface RecurringExpense {
+  name: string;
+  category: string;
+  monthly_amount: number;
+  yearly_cost: number;
+  months_seen: number;
+  last_seen: string;
+}
+
+export interface SpendingResponse {
+  year: number;
+  month: number | null;
+  available_years: number[];
+  period_start: string;
+  period_end: string;
+  income_total: number;
+  expense_total: number;
+  savings_total: number;
+  transaction_count: number;
+  categories: SpendCategory[];
+  top_merchants: SpendMerchant[];
+  top_transactions: SpendTransaction[];
+  days: SpendDay[];
+  weekdays: SpendWeekday[];
+  recurring: RecurringExpense[];
+  recurring_monthly_total: number;
   warnings: string[];
 }
 

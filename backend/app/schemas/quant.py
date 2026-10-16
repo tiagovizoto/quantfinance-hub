@@ -207,6 +207,19 @@ class DebtPoint(BaseModel):
     snowball: float
 
 
+class CostPoint(BaseModel):
+    """Do que é feito o pagamento de cada mês: juros (dinheiro perdido) x principal (dívida que cai)."""
+
+    month: int
+    on: str
+    baseline_interest: float
+    baseline_principal: float
+    avalanche_interest: float
+    avalanche_principal: float
+    snowball_interest: float
+    snowball_principal: float
+
+
 class TimelinePoint(BaseModel):
     month: int
     on: str
@@ -225,7 +238,79 @@ class LoanStrategyResponse(BaseModel):
     strategies: list[StrategyResult]
     best_strategy: str | None
     debt_curve: list[DebtPoint]
+    cost_curve: list[CostPoint] = []
     timeline: list[TimelinePoint]
+    warnings: list[str]
+
+
+# --------------------------------------------------------------------- explorador de gastos
+class SpendMerchant(BaseModel):
+    name: str
+    total: float
+    count: int
+    share: float | None  # fração do total da categoria (ou do período, na lista geral)
+
+
+class SpendTransaction(BaseModel):
+    id: str
+    date: date
+    description: str
+    category: str
+    account: str
+    amount: float
+
+
+class SpendCategory(BaseModel):
+    category: str
+    total: float
+    share: float | None  # fração das despesas do período
+    count: int
+    average: float  # valor médio por lançamento
+    monthly: list[float]  # 12 valores (jan..dez) do ANO inteiro, para ver a tendência
+    merchants: list[SpendMerchant]
+    top_transactions: list[SpendTransaction]
+
+
+class SpendDay(BaseModel):
+    date: date
+    expense: float
+    count: int
+
+
+class SpendWeekday(BaseModel):
+    weekday: int  # 0 = segunda
+    label: str
+    total: float
+    count: int
+    average_per_day: float  # total / nº de dias dessa semana no intervalo com dados
+
+
+class RecurringExpense(BaseModel):
+    name: str
+    category: str
+    monthly_amount: float
+    yearly_cost: float
+    months_seen: int
+    last_seen: date
+
+
+class SpendingResponse(BaseModel):
+    year: int
+    month: int | None
+    available_years: list[int]
+    period_start: date
+    period_end: date  # último dia (inclusive)
+    income_total: float
+    expense_total: float
+    savings_total: float
+    transaction_count: int
+    categories: list[SpendCategory]
+    top_merchants: list[SpendMerchant]
+    top_transactions: list[SpendTransaction]
+    days: list[SpendDay]
+    weekdays: list[SpendWeekday]
+    recurring: list[RecurringExpense]
+    recurring_monthly_total: float
     warnings: list[str]
 
 

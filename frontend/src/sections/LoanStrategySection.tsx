@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import {
+  Area,
+  AreaChart,
   Bar,
+  BarChart,
   CartesianGrid,
-  ComposedChart,
   Legend,
   Line,
   LineChart,
@@ -14,10 +16,13 @@ import {
 
 import { useLoanStrategy } from "../api/hooks";
 import type { LoanStrategyResponse, StrategyResult } from "../api/types";
+import { ChartOrTable, Pills, TooltipBox } from "../components/chart";
+import type { TipProps } from "../components/chart";
 import { Async, Figure, FigureRow, Notes, Section } from "../components/ui";
-import { brl, brlCompactFmt, pct, monthLabel } from "../lib/format";
+import { AXIS_TICK, GRID, INTEREST_COLOR, PRINCIPAL_COLOR, SERIES, STRATEGY_COLOR } from "../lib/chart";
+import { brl, brlCompactFmt, monthLabel, pct } from "../lib/format";
 
-const LOAN_COLORS = ["#2748c9", "#b07a00", "#7a3e9d", "#1b8ea6", "#566370", "#c0507a"];
+const LOAN_COLORS = SERIES;
 const MAX_SLIDER = 5000;
 
 function useDebounced<T>(value: T, delayMs: number): T {
@@ -167,11 +172,11 @@ function DebtCurve({ d }: { d: LoanStrategyResponse }) {
             <CartesianGrid stroke="var(--color-line)" strokeDasharray="2 4" vertical={false} />
             <XAxis dataKey="label" interval="preserveStartEnd" minTickGap={48} tick={{ fill: "var(--color-muted)", fontSize: 12 }} tickLine={false} />
             <YAxis width={72} tickFormatter={brlCompactFmt} tick={{ fill: "var(--color-muted)", fontSize: 12 }} tickLine={false} axisLine={false} />
-            <Tooltip formatter={(value) => brl(Number(value))} />
+            <Tooltip content={(props) => <TooltipBox {...(props as unknown as TipProps)} format={(v) => brl(v)} />} />
             <Legend iconType="plainline" />
-            <Line dataKey="Só as parcelas atuais" stroke="var(--color-muted)" strokeDasharray="5 4" strokeWidth={2} dot={false} isAnimationActive={false} />
-            <Line dataKey="Maior CET primeiro" stroke="var(--color-accent)" strokeWidth={2.5} dot={false} isAnimationActive={false} />
-            <Line dataKey="Menor saldo primeiro" stroke="#b07a00" strokeWidth={2.5} dot={false} isAnimationActive={false} />
+            <Line dataKey="Só as parcelas atuais" stroke={STRATEGY_COLOR.baseline} strokeDasharray="5 4" strokeWidth={2} dot={false} isAnimationActive={false} />
+            <Line dataKey="Maior CET primeiro" stroke={STRATEGY_COLOR.avalanche} strokeWidth={2.5} dot={false} isAnimationActive={false} />
+            <Line dataKey="Menor saldo primeiro" stroke={STRATEGY_COLOR.snowball} strokeWidth={2.5} dot={false} isAnimationActive={false} />
           </LineChart>
         </ResponsiveContainer>
       </div>
@@ -180,54 +185,129 @@ function DebtCurve({ d }: { d: LoanStrategyResponse }) {
 }
 
 function Timeline({ d }: { d: LoanStrategyResponse }) {
-  const hasIncome = d.timeline.some((p) => p.commitment !== null);
   const data = d.timeline.map((p) => ({
     label: monthLabel(p.on),
     ...Object.fromEntries(p.by_loan.map((v, i) => [`l${i}`, v])),
-    commitment: p.commitment,
   }));
   return (
     <div className="mt-10">
       <h3 className="text-xl">Parcelas por mês, mantido o ritmo atual</h3>
       <p className="mt-1 max-w-[70ch] text-sm text-muted">
-        Cada vez que um empréstimo termina, a parcela dele sai do orçamento
-        {hasIncome ? " e a linha mostra quanto da renda média ainda fica comprometida" : ""}.
+        Cada vez que um empréstimo termina, a parcela dele sai do orçamento.
       </p>
-      <div className="mt-3 h-72" role="img" aria-label="Parcelas mensais por empréstimo e comprometimento da renda">
+      <ChartOrTable
+        label="Parcelas mensais por empréstimo"
+        head={["Mês", ...d.loans.map((l) => l.name), "Total"]}
+        rows={d.timeline.map((p) => [monthLabel(p.on), ...p.by_loan.map((v) => brl(v)), brl(p.total)])}
+        chart={
+          <div className="h-72" role="img" aria-label="Parcelas mensais por empréstimo">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={data} margin={{ top: 8, right: 16, bottom: 0, left: 0 }} barCategoryGap="12%">
+                <CartesianGrid stroke={GRID} vertical={false} />
+                <XAxis dataKey="label" interval="preserveStartEnd" minTickGap={48} tick={AXIS_TICK} tickLine={false} axisLine={false} />
+                <YAxis width={64} tickFormatter={brlCompactFmt} tick={AXIS_TICK} tickLine={false} axisLine={false} />
+                <Tooltip
+                  cursor={{ fill: "rgba(23,33,43,0.06)" }}
+                  content={(props) => <TooltipBox {...(props as unknown as TipProps)} format={(v) => brl(v)} />}
+                />
+                <Legend iconType="square" />
+                {d.loans.map((loan, i) => (
+                  <Bar
+                    key={loan.loan_id}
+                    stackId="parcelas"
+                    dataKey={`l${i}`}
+                    name={loan.name}
+                    fill={LOAN_COLORS[i % LOAN_COLORS.length]}
+                    stroke="#f8f9fb"
+                    strokeWidth={1}
+                    isAnimationActive={false}
+                  />
+                ))}
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        }
+      />
+      {d.timeline.some((p) => p.commitment !== null) && <Commitment d={d} />}
+    </div>
+  );
+}
+
+/** Eixo próprio: % da renda média que as parcelas ocupam (nunca no mesmo gráfico dos reais). */
+function Commitment({ d }: { d: LoanStrategyResponse }) {
+  const data = d.timeline.map((p) => ({ label: monthLabel(p.on), value: p.commitment ?? 0 }));
+  return (
+    <div className="mt-6">
+      <h4 className="text-base font-medium">Quanto da renda as parcelas ocupam</h4>
+      <div className="mt-2 h-40" role="img" aria-label="Percentual da renda média comprometido com parcelas ao longo do tempo">
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={data} margin={{ top: 8, right: hasIncome ? 8 : 16, bottom: 0, left: 0 }}>
-            <CartesianGrid stroke="var(--color-line)" strokeDasharray="2 4" vertical={false} />
-            <XAxis dataKey="label" interval="preserveStartEnd" minTickGap={48} tick={{ fill: "var(--color-muted)", fontSize: 12 }} tickLine={false} />
-            <YAxis yAxisId="money" width={64} tickFormatter={brlCompactFmt} tick={{ fill: "var(--color-muted)", fontSize: 12 }} tickLine={false} axisLine={false} />
-            {hasIncome && (
-              <YAxis
-                yAxisId="share"
-                orientation="right"
-                width={44}
-                tickFormatter={(v) => `${Math.round(Number(v) * 100)}%`}
-                tick={{ fill: "var(--color-muted)", fontSize: 12 }}
-                tickLine={false}
-                axisLine={false}
-              />
-            )}
-            <Tooltip formatter={(value, name) => (name === "% da renda" ? pct(Number(value), 1) : brl(Number(value)))} />
-            <Legend iconType="square" />
-            {d.loans.map((loan, i) => (
-              <Bar
-                key={loan.loan_id}
-                yAxisId="money"
-                stackId="parcelas"
-                dataKey={`l${i}`}
-                name={loan.name}
-                fill={LOAN_COLORS[i % LOAN_COLORS.length]}
-                isAnimationActive={false}
-              />
-            ))}
-            {hasIncome && (
-              <Line yAxisId="share" dataKey="commitment" name="% da renda" stroke="var(--color-ink)" strokeWidth={2} dot={false} isAnimationActive={false} />
-            )}
-          </ComposedChart>
+          <AreaChart data={data} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
+            <CartesianGrid stroke={GRID} vertical={false} />
+            <XAxis dataKey="label" interval="preserveStartEnd" minTickGap={48} tick={AXIS_TICK} tickLine={false} axisLine={false} />
+            <YAxis width={64} tickFormatter={(v) => `${Math.round(Number(v) * 100)}%`} tick={AXIS_TICK} tickLine={false} axisLine={false} domain={[0, "auto"]} />
+            <Tooltip content={(props) => <TooltipBox {...(props as unknown as TipProps)} format={(v) => pct(v, 1)} />} />
+            <Area dataKey="value" name="% da renda" stroke="#17212b" fill="#17212b" fillOpacity={0.08} strokeWidth={2} dot={false} isAnimationActive={false} />
+          </AreaChart>
         </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+/** Do que é feito cada pagamento: principal (a dívida cai) x juros (dinheiro que vai embora). */
+function CostBreakdown({ d }: { d: LoanStrategyResponse }) {
+  const [key, setKey] = useState<"baseline" | "avalanche" | "snowball">(d.best_strategy ?? "baseline");
+  const labels: Record<string, string> = Object.fromEntries(d.strategies.map((s) => [s.key, s.label]));
+  const data = d.cost_curve.map((p) => ({
+    label: monthLabel(p.on),
+    principal: p[`${key}_principal`],
+    interest: p[`${key}_interest`],
+  }));
+  const sum = (field: "principal" | "interest", months: number) =>
+    data.slice(0, months).reduce((total, row) => total + row[field], 0);
+  const firstYear = sum("principal", 12) + sum("interest", 12);
+  const interestShare = firstYear > 0 ? sum("interest", 12) / firstYear : null;
+
+  return (
+    <div className="mt-10">
+      <h3 className="text-xl">Para onde vai o que você paga</h3>
+      <p className="num mt-1 max-w-[70ch] text-sm text-muted">
+        Cada pagamento tem uma parte que abate a dívida (principal) e outra que é só custo (juros).
+        {interestShare !== null && <> Nos próximos 12 meses, {pct(interestShare, 0)} do que você paga é juros.</>}
+      </p>
+      <div className="mt-3">
+        <Pills
+          label="Estratégia"
+          small
+          value={key}
+          onChange={setKey}
+          options={d.strategies.map((s) => ({ value: s.key, label: labels[s.key] ?? s.key }))}
+        />
+      </div>
+      <div className="mt-3">
+        <ChartOrTable
+          label={`Principal e juros por mês — ${labels[key] ?? key}`}
+          head={["Mês", "Principal", "Juros"]}
+          rows={data.map((r) => [r.label, brl(r.principal), brl(r.interest)])}
+          chart={
+            <div className="h-72" role="img" aria-label={`Principal e juros pagos por mês, estratégia ${labels[key] ?? key}`}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={data} margin={{ top: 8, right: 16, bottom: 0, left: 0 }} barCategoryGap="12%">
+                  <CartesianGrid stroke={GRID} vertical={false} />
+                  <XAxis dataKey="label" interval="preserveStartEnd" minTickGap={48} tick={AXIS_TICK} tickLine={false} axisLine={false} />
+                  <YAxis width={64} tickFormatter={brlCompactFmt} tick={AXIS_TICK} tickLine={false} axisLine={false} />
+                  <Tooltip
+                    cursor={{ fill: "rgba(23,33,43,0.06)" }}
+                    content={(props) => <TooltipBox {...(props as unknown as TipProps)} format={(v) => brl(v)} />}
+                  />
+                  <Legend iconType="square" />
+                  <Bar dataKey="principal" name="Principal (abate a dívida)" stackId="p" fill={PRINCIPAL_COLOR} stroke="#f8f9fb" strokeWidth={1} isAnimationActive={false} />
+                  <Bar dataKey="interest" name="Juros (custo)" stackId="p" fill={INTEREST_COLOR} stroke="#f8f9fb" strokeWidth={1} isAnimationActive={false} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          }
+        />
       </div>
     </div>
   );
@@ -293,6 +373,7 @@ function Body({ d }: { d: LoanStrategyResponse }) {
     <>
       <Strategies d={d} />
       <DebtCurve d={d} />
+      <CostBreakdown d={d} />
       <Timeline d={d} />
       <LoansTable d={d} />
       <Notes items={d.warnings} />
@@ -300,8 +381,7 @@ function Body({ d }: { d: LoanStrategyResponse }) {
   );
 }
 
-export function LoanStrategySection() {
-  const [extra, setExtra] = useState(0);
+export function LoanStrategySection({ extra, onExtraChange }: { extra: number; onExtraChange: (value: number) => void }) {
   const query = useLoanStrategy(useDebounced(extra, 300));
   return (
     <Section
@@ -309,7 +389,7 @@ export function LoanStrategySection() {
       title="Plano de quitação"
       intro="Em que ordem pagar os empréstimos e quanto o valor extra de cada mês encurta o caminho."
     >
-      <ExtraControl value={extra} onChange={setExtra} />
+      <ExtraControl value={extra} onChange={onExtraChange} />
       <div aria-busy={query.isFetching} className={query.isPlaceholderData ? "opacity-60" : undefined}>
         <Async query={query}>{(d) => <Body d={d} />}</Async>
       </div>

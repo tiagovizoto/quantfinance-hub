@@ -9,12 +9,14 @@ import { AnomaliesSection } from "./sections/AnomaliesSection";
 import { ArbitrageSection } from "./sections/ArbitrageSection";
 import { CashflowSection } from "./sections/CashflowSection";
 import { CreditRiskSection } from "./sections/CreditRiskSection";
+import { ExplorerSection } from "./sections/ExplorerSection";
 import { LoanStrategySection } from "./sections/LoanStrategySection";
 import { MonteCarloSection } from "./sections/MonteCarloSection";
 import { YearSection } from "./sections/YearSection";
 
 const NAV = [
   { href: "#ano", label: "Para onde foi" },
+  { href: "#explorar", label: "Explorar" },
   { href: "#fluxo", label: "Fluxo de caixa" },
   { href: "#gastos", label: "Gastos" },
   { href: "#projecao", label: "Projeção" },
@@ -116,6 +118,13 @@ function Hero({ assumptions }: { assumptions: Assumptions }) {
 
 export default function App() {
   const [assumptions, setAssumptions] = useState<Assumptions>({});
+  // Valor extra mensal do plano de quitação; também alimentado pelo simulador de cortes do explorador.
+  const [extra, setExtra] = useState(0);
+
+  const useAsExtra = (monthly: number) => {
+    setExtra(monthly);
+    window.location.hash = "#quitacao";
+  };
 
   return (
     <>
@@ -129,11 +138,12 @@ export default function App() {
           <AssumptionsPanel value={assumptions} onApply={setAssumptions} />
         </div>
         <YearSection />
+        <ExplorerSection onUseAsExtra={useAsExtra} />
         <CashflowSection />
         <AnomaliesSection />
         <MonteCarloSection assumptions={assumptions} />
         <ArbitrageSection assumptions={assumptions} />
-        <LoanStrategySection />
+        <LoanStrategySection extra={extra} onExtraChange={setExtra} />
         <CreditRiskSection />
       </main>
       <footer className="mx-auto max-w-[1120px] px-4 pb-10 text-xs text-muted sm:px-8">

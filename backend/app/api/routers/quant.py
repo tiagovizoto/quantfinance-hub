@@ -14,6 +14,7 @@ from app.schemas.quant import (
     LoanStrategyResponse,
     MarketAssumptions,
     MonteCarloResponse,
+    SpendingResponse,
     YearSummaryResponse,
 )
 from app.services.quant_engine import InsufficientDataError, QuantEngine
@@ -67,6 +68,17 @@ async def year_summary(
     """Para onde foi o dinheiro no ano: totais, meses e categorias x mês."""
     today = date.today()
     return await engine.year_summary(year or today.year, today)
+
+
+@router.get("/spending", response_model=SpendingResponse)
+async def spending(
+    engine: Engine,
+    year: Annotated[int | None, Query(ge=2000, le=2100, description="Ano civil (padrão: atual)")] = None,
+    month: Annotated[int | None, Query(ge=1, le=12, description="Mês (vazio = ano todo)")] = None,
+) -> SpendingResponse:
+    """Explorador: categorias com comerciantes, dias, dias da semana, recorrentes e maiores gastos."""
+    today = date.today()
+    return await engine.spending(year or today.year, month, today)
 
 
 @router.get("/cashflow", response_model=CashflowResponse)

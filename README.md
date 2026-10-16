@@ -27,7 +27,7 @@ quantfinance-hub/
 │   └── .env.example
 └── frontend/                    # React + Vite + TS + Tailwind v4 + Recharts
     ├── src/api/                 # client, hooks (React Query) e tipos espelhando os schemas
-    ├── src/sections/            # Para onde foi (ano), Fluxo de caixa, Gastos, Projeção, Dívida, Quitação, Risco
+    ├── src/sections/            # Para onde foi (ano), Explorar, Fluxo de caixa, Gastos, Projeção, Dívida, Quitação, Risco
     ├── src/components/ui.tsx    # Section, Figure, Meter, estados de carga/erro
     └── vite.config.ts           # proxy /api -> http://localhost:8000
 ```
@@ -63,7 +63,8 @@ Suba o backend antes. O botão "Sincronizar agora" usa o `PLUGGY_ITEM_ID` do `.e
 | Rota | O que devolve |
 |---|---|
 | `GET /year-summary?year=2026` | para onde foi o dinheiro no ano: totais, meses e categorias x mês (aceita qualquer ano com dados) |
-| `GET /loan-strategy?extra=500` | plano de quitação: avalanche (maior CET) x bola de neve (menor saldo) com valor extra mensal, linha do tempo das parcelas e dívida mês a mês |
+| `GET /spending?year=2026&month=9` | explorador de gastos: categorias (com comerciantes e maiores lançamentos), calendário diário, dia da semana, gastos recorrentes e maiores gastos avulsos; `month` vazio = ano todo |
+| `GET /loan-strategy?extra=500` | plano de quitação: avalanche (maior CET) x bola de neve (menor saldo) com valor extra mensal, linha do tempo das parcelas, dívida mês a mês e juros x principal de cada pagamento |
 | `GET /cashflow` | taxa de poupança, burn rate (diário/mensal), runway normal e estresse (+2σ) |
 | `GET /anomalies` | Z-score do gasto do mês por categoria vs. últimos 6 meses |
 | `GET /monte-carlo` | patrimônio líquido em 12/24/60 meses (P10/P50/P90), 10.000 simulações |

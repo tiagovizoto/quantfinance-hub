@@ -47,3 +47,21 @@ export function relativeTime(iso: string | null | undefined, now = new Date()): 
   if (hours < 24) return `há ${hours} h`;
   return `há ${Math.round(hours / 24)} d`;
 }
+
+export const MONTHS_SHORT = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"] as const;
+export const MONTHS_FULL = [
+  "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+  "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
+] as const;
+
+/** "2026-03-08" -> "08/03". Sem `new Date`: evita o deslocamento de fuso em datas só com dia. */
+export function dayMonth(iso: string): string {
+  const [, month, day] = iso.split("-");
+  return `${day}/${month}`;
+}
+
+/** "2026-03-08" -> "8 de março de 2026" */
+export function fullDate(iso: string): string {
+  const [year, month, day] = iso.split("-");
+  return `${Number(day)} de ${MONTHS_FULL[Number(month) - 1]} de ${year}`;
+}

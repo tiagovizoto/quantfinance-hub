@@ -9,6 +9,7 @@ import type {
   CreditRiskResponse,
   LoanStrategyResponse,
   MonteCarloResponse,
+  SpendingResponse,
   SyncResponse,
   SyncStatus,
   YearSummaryResponse,
@@ -23,6 +24,15 @@ export function useYearSummary(year: number) {
     queryKey: ["year-summary", year],
     queryFn: () => request<YearSummaryResponse>(withQuery("/quant/year-summary", { year })),
     placeholderData: keepPreviousData, // ao trocar de ano, mantém o anterior na tela até chegar o novo
+    retry: shouldRetry,
+  });
+}
+
+export function useSpending(year: number, month: number | null) {
+  return useQuery({
+    queryKey: ["spending", year, month],
+    queryFn: () => request<SpendingResponse>(withQuery("/quant/spending", { year, month: month ?? undefined })),
+    placeholderData: keepPreviousData, // trocar período mantém o gráfico anterior até o novo chegar
     retry: shouldRetry,
   });
 }

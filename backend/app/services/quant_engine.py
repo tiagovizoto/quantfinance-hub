@@ -14,7 +14,9 @@ Convenções:
 """
 
 import math
+import re
 import unicodedata
+from calendar import monthrange
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -34,6 +36,7 @@ from app.schemas.quant import (
     CardUtilization,
     CashflowResponse,
     CategoryAnomaly,
+    CostPoint,
     CreditRiskResponse,
     DebtPoint,
     FanPoint,
@@ -45,6 +48,13 @@ from app.schemas.quant import (
     MonteCarloResponse,
     MonthlyFlow,
     PayoffStep,
+    RecurringExpense,
+    SpendCategory,
+    SpendDay,
+    SpendingResponse,
+    SpendMerchant,
+    SpendTransaction,
+    SpendWeekday,
     StrategyResult,
     TimelinePoint,
     WealthHorizon,
@@ -367,6 +377,7 @@ class PayoffSim:
     payoff_month: dict[str, int]
     remaining: list[float]  # saldo total no mês 0..months
     paid: list[list[float]]  # [mês-1][i-ésima dívida]
+    interest_by_month: list[float]  # juros cobrados em cada mês 1..months
 
 
 _EPS: Final = 0.005
@@ -396,6 +407,7 @@ def simulate_payoff(
     capacity = sum(d.first_installment for d in debts) + extra
     remaining = [sum(balance.values())]
     paid_rows: list[list[float]] = []
+    interest_rows: list[float] = []
 
     month = 0
     while month < max_months and any(b > _EPS for b in balance.values()):
@@ -403,8 +415,10 @@ def simulate_payoff(
         row = [0.0] * len(debts)
         active = [d for d in debts if balance[d.id] > _EPS]
         spent = 0.0
+        month_interest = 0.0
         for d in active:
             interest = balance[d.id] * d.rate
+            month_interest += interest
             balance[d.id] += interest
             interest_by[d.id] += interest
             due = d.balance / d.n + interest if d.amortization == "SAC" else pmt[d.id]
@@ -435,6 +449,7 @@ def simulate_payoff(
                 payoff.setdefault(d.id, month)
         remaining.append(sum(balance.values()))
         paid_rows.append(row)
+        interest_rows.append(month_interest)
 
     return PayoffSim(
         months=month,
@@ -444,6 +459,7 @@ def simulate_payoff(
         payoff_month=payoff,
         remaining=remaining,
         paid=paid_rows,
+        interest_by_month=interest_rows,
     )
 
 
@@ -510,6 +526,61 @@ def category_zscores(
 
 
 # ===========================================================================
+# 2b. Explorador de gastos: agrupamento por comerciante e recorrentes
+# ===========================================================================
+_MERCHANT_STOP: Final = frozenset(
+    "compra no debito credito pix enviado recebido transferencia enviada recebida pelo pagamento de em a "
+    "pag pg mp ifd da do dos das para".split()
+)
+_WEEKDAYS_PT: Final = ("Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom")
+
+
+def merchant_key(description: str | None) -> str:
+    """Chave estável do comerciante: sem acento/números/prefixos genéricos, 3 primeiras palavras.
+
+    "Compra no débito - Padaria Pão 123" e "COMPRA NO DEBITO PADARIA PAO 456" caem no mesmo grupo.
+    """
+    tokens = [t for t in re.sub(r"[^a-z0-9]+", " ", _norm(description or "")).split() if not t.isdigit()]
+    trimmed = list(tokens)
+    while trimmed and trimmed[0] in _MERCHANT_STOP:
+        trimmed.pop(0)
+    return " ".join((trimmed or tokens)[:3]) or "sem descricao"
+
+
+def detect_recurring(spend: pd.DataFrame) -> list[RecurringExpense]:
+    """Gastos que se repetem todo mês com valor parecido (assinaturas, mensalidades, aluguel...).
+
+    Exige: >= 3 meses distintos, presença em >= 60% dos meses do intervalo, no máximo ~2 lançamentos
+    por mês ativo e >= 70% dos valores a ±15% da mediana. Espera colunas date, expense, category, key.
+    """
+    found: list[RecurringExpense] = []
+    positive = spend[spend["expense"] > 0]
+    for key, group in positive.groupby("key"):
+        months = group["date"].dt.to_period("M")
+        seen = int(months.nunique())
+        if seen < 3:
+            continue
+        span = (months.max() - months.min()).n + 1
+        per_month = group.groupby(months)["expense"].agg(["sum", "count"])
+        median = float(group["expense"].median())
+        close = float(((group["expense"] - median).abs() <= 0.15 * median).mean())
+        if seen / span < 0.6 or float(per_month["count"].mean()) > 2.0 or close < 0.7:
+            continue
+        monthly = float(per_month["sum"].mean())
+        found.append(
+            RecurringExpense(
+                name=str(key).title(),
+                category=str(group["category"].mode().iat[0]),
+                monthly_amount=_r0(monthly),
+                yearly_cost=_r0(monthly * 12),
+                months_seen=seen,
+                last_seen=group["date"].max().date(),
+            )
+        )
+    return sorted(found, key=lambda r: -r.monthly_amount)
+
+
+# ===========================================================================
 # 3. Engine (carrega dados via ORM e monta as respostas)
 # ===========================================================================
 class QuantEngine:
@@ -531,6 +602,8 @@ class QuantEngine:
                 Transaction.category,
                 Transaction.description,
                 Account.type.label("account_type"),
+                Transaction.id.label("tx_id"),
+                Account.name.label("account_name"),
             )
             .join(Account, Account.id == Transaction.account_id)
             .where(Transaction.date >= since)
@@ -538,7 +611,7 @@ class QuantEngine:
         if until is not None:
             statement = statement.where(Transaction.date < until)
         rows = (await self._session.execute(statement)).all()
-        columns = ["date", "amount", "type", "category", "description", "account_type"]
+        columns = ["date", "amount", "type", "category", "description", "account_type", "tx_id", "account_name"]
         raw = pd.DataFrame([tuple(r) for r in rows], columns=columns)
         if raw.empty:
             return pd.DataFrame(
@@ -978,7 +1051,7 @@ class QuantEngine:
             return LoanStrategyResponse(
                 as_of=as_of, extra_monthly=extra, avg_monthly_income=_r(avg_income), total_balance=0.0,
                 total_installments_now=0.0, loans=[], strategies=[], best_strategy=None, debt_curve=[],
-                timeline=[], warnings=warnings + ["Nenhum empréstimo ativo com saldo e parcelas conhecidos."],
+                cost_curve=[], timeline=[], warnings=warnings + ["Nenhum empréstimo ativo com saldo e parcelas conhecidos."],
             )  # fmt: skip
         warnings.append(
             "Parcelas e juros são estimados a partir do saldo devedor, das parcelas restantes e do CET "
@@ -1046,6 +1119,24 @@ class QuantEngine:
             )
             for m in range(length)
         ]  # fmt: skip
+        def split(sim: PayoffSim, m: int) -> tuple[float, float]:
+            """(juros, principal) pagos no mês m (1..); zeros depois de quitar."""
+            if m > len(sim.paid):
+                return 0.0, 0.0
+            interest = sim.interest_by_month[m - 1]
+            return _r0(interest), _r0(max(sum(sim.paid[m - 1]) - interest, 0.0))
+
+        cost_curve = []
+        for m in range(1, length):
+            (bi, bp), (ai, ap), (si, sp) = split(baseline, m), split(avalanche, m), split(snowball, m)
+            cost_curve.append(
+                CostPoint(
+                    month=m, on=add_months_label(as_of, m),
+                    baseline_interest=bi, baseline_principal=bp,
+                    avalanche_interest=ai, avalanche_principal=ap,
+                    snowball_interest=si, snowball_principal=sp,
+                )
+            )  # fmt: skip
         timeline = [
             TimelinePoint(
                 month=m + 1,
@@ -1066,9 +1157,127 @@ class QuantEngine:
             strategies=strategies,
             best_strategy=best,
             debt_curve=curve,
+            cost_curve=cost_curve,
             timeline=timeline,
             warnings=warnings,
         )
+
+    async def spending(self, year: int, month: int | None, today: date) -> SpendingResponse:
+        """Explorador de gastos de um ano (ou de um mês dele): categorias, comerciantes, dias e recorrentes."""
+        year_rows = await self._session.execute(select(extract("year", Transaction.date)).distinct())
+        available = sorted({int(r[0]) for r in year_rows.all() if r[0] is not None}, reverse=True)
+
+        flows = await self._load_flows(datetime(year, 1, 1), datetime(year + 1, 1, 1))
+        if month is None:
+            start, end = date(year, 1, 1), date(year, 12, 31)
+        else:
+            start, end = date(year, month, 1), date(year, month, monthrange(year, month)[1])
+        warnings: list[str] = []
+        empty = SpendingResponse(
+            year=year, month=month, available_years=available, period_start=start, period_end=end,
+            income_total=0.0, expense_total=0.0, savings_total=0.0, transaction_count=0, categories=[],
+            top_merchants=[], top_transactions=[], days=[], weekdays=[], recurring=[],
+            recurring_monthly_total=0.0, warnings=[f"Nenhuma transação importada em {year}."],
+        )  # fmt: skip
+        if flows.empty:
+            return empty
+
+        flows = flows.assign(
+            key=flows["description"].map(merchant_key),
+            month=flows["date"].dt.month,
+            category=flows["category"].fillna(UNCATEGORIZED),
+        )
+        spend_year = flows[flows["expense"] != 0]
+        recurring = detect_recurring(spend_year)
+
+        in_period = flows if month is None else flows[flows["month"] == month]
+        spend = in_period[in_period["expense"] != 0]
+        if spend.empty and in_period["income"].sum() == 0:
+            return empty.model_copy(update={"warnings": [f"Nenhuma transação em {MONTH_NAMES_PT[month - 1]}/{year}."]
+                                            if month else empty.warnings})
+
+        income_total = float(in_period["income"].sum())
+        expense_total = float(spend["expense"].sum())
+
+        def to_tx(row: Any) -> SpendTransaction:
+            return SpendTransaction(
+                id=str(row.tx_id), date=row.date.date(), description=str(row.description or "(sem descrição)"),
+                category=str(row.category), account=str(row.account_name), amount=_r0(row.expense),
+            )  # fmt: skip
+
+        def merchants(frame: pd.DataFrame, base: float, limit: int) -> list[SpendMerchant]:
+            grouped = frame.groupby("key")["expense"].agg(["sum", "count"]).sort_values("sum", ascending=False)
+            return [
+                SpendMerchant(
+                    name=str(k).title(), total=_r0(r["sum"]), count=int(r["count"]),
+                    share=_r(r["sum"] / base, 4) if base > 0 else None,
+                )
+                for k, r in grouped.head(limit).iterrows()
+                if r["sum"] > 0
+            ]  # fmt: skip
+
+        year_monthly = (
+            spend_year.groupby(["category", "month"])["expense"].sum().unstack(fill_value=0.0)
+            .reindex(columns=range(1, 13), fill_value=0.0)
+        )  # fmt: skip
+        categories: list[SpendCategory] = []
+        for name, frame in spend.groupby("category"):
+            total = float(frame["expense"].sum())
+            if total <= 0:
+                continue
+            monthly = year_monthly.loc[name].tolist() if name in year_monthly.index else [0.0] * 12
+            positive = frame[frame["expense"] > 0]
+            categories.append(
+                SpendCategory(
+                    category=str(name), total=_r0(total),
+                    share=_r(total / expense_total, 4) if expense_total > 0 else None,
+                    count=len(positive), average=_r0(positive["expense"].mean()) if len(positive) else 0.0,
+                    monthly=[_r0(v) for v in monthly],
+                    merchants=merchants(frame, total, 10),
+                    top_transactions=[to_tx(r) for r in positive.nlargest(6, "expense").itertuples()],
+                )
+            )  # fmt: skip
+        categories.sort(key=lambda c: -c.total)
+
+        daily = spend.assign(day=spend["date"].dt.normalize()).groupby("day")["expense"].agg(["sum", "count"])
+        days = [SpendDay(date=d.date(), expense=_r0(r["sum"]), count=int(r["count"])) for d, r in daily.iterrows()]
+
+        weekdays: list[SpendWeekday] = []
+        first, last = spend["date"].min().normalize(), spend["date"].max().normalize()
+        span = pd.date_range(first, last, freq="D")
+        by_weekday = spend.groupby(spend["date"].dt.weekday)["expense"].agg(["sum", "count"])
+        for wd in range(7):
+            occurrences = int((span.weekday == wd).sum()) or 1
+            total = float(by_weekday["sum"].get(wd, 0.0))
+            weekdays.append(
+                SpendWeekday(
+                    weekday=wd, label=_WEEKDAYS_PT[wd], total=_r0(total),
+                    count=int(by_weekday["count"].get(wd, 0)), average_per_day=_r0(total / occurrences),
+                )
+            )  # fmt: skip
+
+        uncategorized = next((c.total for c in categories if c.category == UNCATEGORIZED), 0.0)
+        if expense_total > 0 and uncategorized / expense_total >= 0.15:
+            warnings.append(f"{uncategorized / expense_total:.0%} das despesas estão sem categoria.")
+        if recurring:
+            warnings.append(
+                "Gastos recorrentes são detectados pelo nome do estabelecimento e pela regularidade do valor; "
+                "confira a lista antes de cancelar algo."
+            )
+
+        positive_spend = spend[spend["expense"] > 0]
+        # "Avulsos": fora os gastos fixos (aluguel, assinaturas), que já têm bloco próprio e dominariam a lista.
+        recurring_names = {r.name for r in recurring}
+        one_off = positive_spend[~positive_spend["key"].map(lambda k: str(k).title() in recurring_names)]
+        return SpendingResponse(
+            year=year, month=month, available_years=available, period_start=start, period_end=end,
+            income_total=_r0(income_total), expense_total=_r0(expense_total),
+            savings_total=_r0(income_total - expense_total), transaction_count=len(positive_spend),
+            categories=categories, top_merchants=merchants(spend, expense_total, 15),
+            top_transactions=[to_tx(r) for r in one_off.nlargest(30, "expense").itertuples()],
+            days=days, weekdays=weekdays, recurring=recurring[:20],
+            recurring_monthly_total=_r0(sum(r.monthly_amount for r in recurring)), warnings=warnings,
+        )  # fmt: skip
 
     # -- 4. risco de crédito ------------------------------------------------
     async def credit_risk(self, as_of: date, *, include_investments: bool = False) -> CreditRiskResponse:
