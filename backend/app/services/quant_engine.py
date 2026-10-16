@@ -547,36 +547,53 @@ def merchant_key(description: str | None) -> str:
     return " ".join((trimmed or tokens)[:3]) or "sem descricao"
 
 
-def detect_recurring(spend: pd.DataFrame) -> list[RecurringExpense]:
-    """Gastos que se repetem todo mês com valor parecido (assinaturas, mensalidades, aluguel...).
+def recurring_groups(frame: pd.DataFrame, value: str = "expense") -> list[dict[str, Any]]:
+    """Grupos que se repetem todo mês com valor parecido (assinaturas, mensalidades, aluguel, salário...).
 
     Exige: >= 3 meses distintos, presença em >= 60% dos meses do intervalo, no máximo ~2 lançamentos
-    por mês ativo e >= 70% dos valores a ±15% da mediana. Espera colunas date, expense, category, key.
+    por mês ativo e >= 70% dos valores a ±15% da mediana. Espera colunas date, category, key e ``value``
+    (``expense`` ou ``income``). Devolve também o dia típico do mês, usado na projeção de caixa.
     """
-    found: list[RecurringExpense] = []
-    positive = spend[spend["expense"] > 0]
+    found: list[dict[str, Any]] = []
+    positive = frame[frame[value] > 0]
     for key, group in positive.groupby("key"):
         months = group["date"].dt.to_period("M")
         seen = int(months.nunique())
         if seen < 3:
             continue
         span = (months.max() - months.min()).n + 1
-        per_month = group.groupby(months)["expense"].agg(["sum", "count"])
-        median = float(group["expense"].median())
-        close = float(((group["expense"] - median).abs() <= 0.15 * median).mean())
+        per_month = group.groupby(months)[value].agg(["sum", "count"])
+        median = float(group[value].median())
+        close = float(((group[value] - median).abs() <= 0.15 * median).mean())
         if seen / span < 0.6 or float(per_month["count"].mean()) > 2.0 or close < 0.7:
             continue
-        monthly = float(per_month["sum"].mean())
         found.append(
-            RecurringExpense(
-                name=str(key).title(),
-                category=str(group["category"].mode().iat[0]),
-                monthly_amount=_r0(monthly),
-                yearly_cost=_r0(monthly * 12),
-                months_seen=seen,
-                last_seen=group["date"].max().date(),
-            )
+            {
+                "key": str(key),
+                "category": str(group["category"].mode().iat[0]),
+                "monthly": float(per_month["sum"].mean()),
+                "median": median,
+                "day": int(group["date"].dt.day.median()),
+                "seen": seen,
+                "last_seen": group["date"].max().date(),
+            }
         )
+    return found
+
+
+def detect_recurring(spend: pd.DataFrame) -> list[RecurringExpense]:
+    """Gastos fixos do período (ver ``recurring_groups``), do maior para o menor valor mensal."""
+    found = [
+        RecurringExpense(
+            name=g["key"].title(),
+            category=g["category"],
+            monthly_amount=_r0(g["monthly"]),
+            yearly_cost=_r0(g["monthly"] * 12),
+            months_seen=g["seen"],
+            last_seen=g["last_seen"],
+        )
+        for g in recurring_groups(spend, "expense")
+    ]
     return sorted(found, key=lambda r: -r.monthly_amount)
 
 

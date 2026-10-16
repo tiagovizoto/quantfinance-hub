@@ -287,3 +287,17 @@ class Loan(TimestampMixin, Base):
     )
 
     item: Mapped["Item"] = relationship(back_populates="loans")
+
+
+class NetWorthSnapshot(Base):
+    """Foto diária do patrimônio, gravada a cada sincronização (o histórico só existe daí em diante)."""
+
+    __tablename__ = "net_worth_snapshots"
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    net_worth: Mapped[Decimal] = mapped_column(MONEY)
+    liquidity: Mapped[Decimal] = mapped_column(MONEY)  # saldo em contas
+    investments: Mapped[Decimal] = mapped_column(MONEY)
+    loans: Mapped[Decimal] = mapped_column(MONEY)  # saldo devedor de empréstimos (positivo)
+    card_debt: Mapped[Decimal] = mapped_column(MONEY)  # cartão em uso (positivo)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)

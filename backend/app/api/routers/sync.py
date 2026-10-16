@@ -1,4 +1,5 @@
-from datetime import datetime
+import logging
+from datetime import date, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -6,11 +7,13 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_session
+from app.database import AsyncSessionLocal, get_session
 from app.models import Item
 from app.schemas.sync import SyncResponse
+from app.services.insights_engine import InsightsEngine
 from app.services.pluggy_service import PluggyAPIError, PluggyAuthError, run_sync
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/sync", tags=["sync"])
 
 
@@ -26,6 +29,15 @@ class SyncStatus(BaseModel):
     items: list[ItemStatus]
 
 
+async def _record_snapshot() -> None:
+    """Grava a foto diária do patrimônio; falha aqui nunca derruba a sincronização."""
+    try:
+        async with AsyncSessionLocal() as session:
+            await InsightsEngine(session).record_snapshot(date.today())
+    except Exception:
+        logger.exception("Falha ao gravar o snapshot de patrimônio")
+
+
 async def _run(item_id: str | None, full_history: bool) -> SyncResponse:
     try:
         result = await run_sync(item_id, full_history=full_history)
@@ -33,6 +45,7 @@ async def _run(item_id: str | None, full_history: bool) -> SyncResponse:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except (PluggyAuthError, PluggyAPIError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    await _record_snapshot()
     return SyncResponse(**result.as_dict())
 
 
