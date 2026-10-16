@@ -19,7 +19,7 @@ import unicodedata
 from calendar import monthrange
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Final
 
 import numpy as np
@@ -71,8 +71,12 @@ MONTH_NAMES_PT: Final = (
 )  # fmt: skip
 UNCATEGORIZED: Final = "Sem categoria"
 DAYS_PER_MONTH: Final = 30.4375
-IR_EXEMPT_SUBTYPES: Final = frozenset({"LCI", "LCA", "LCD", "CRI", "CRA", "POUPANCA", "SAVINGS"})
-FLAT_TAX_RATE: Final = 0.15  # aproximação de longo prazo p/ renda variável, fundos e RF tributada (MC)
+IR_EXEMPT_SUBTYPES: Final = frozenset(
+    {"LCI", "LCA", "LCD", "CRI", "CRA", "POUPANCA", "SAVINGS"}
+)
+FLAT_TAX_RATE: Final = (
+    0.15  # aproximação de longo prazo p/ renda variável, fundos e RF tributada (MC)
+)
 HISTORY_MONTHS_LOADED: Final = 14
 
 REFUND_MARKERS: Final = ("estorno", "reembolso", "refund", "cancelamento", "chargeback")
@@ -110,7 +114,9 @@ def _r0(value: Any, digits: int = 2) -> float:
     return _r(value, digits) or 0.0
 
 
-def classify_flows(df: pd.DataFrame, own_names: Sequence[str] = (), *, net_day_trade: bool = True) -> pd.DataFrame:
+def classify_flows(
+    df: pd.DataFrame, own_names: Sequence[str] = (), *, net_day_trade: bool = True
+) -> pd.DataFrame:
     """Acrescenta ``income``, ``expense`` (>= 0, exceto estornos que reduzem despesa) e ``reason``.
 
     Entrada: date, amount, type, category, description, account_type (BANK|CREDIT) e, opcionais,
@@ -129,23 +135,47 @@ def classify_flows(df: pd.DataFrame, own_names: Sequence[str] = (), *, net_day_t
     reason = pd.Series("", index=out.index)
     for label, mask in (
         ("day_trade", flow_rules._contains(text, flow_rules.DAY_TRADE_MARKERS)),
+        (
+            "emprestimo",
+            flow_rules._contains(text, flow_rules.LOAN_PROCEEDS_MARKERS)
+            & is_credit_dir
+            & ~is_card,
+        ),
         ("investimento", flow_rules._contains(text, flow_rules.INVESTMENT_MARKERS)),
-        ("propria", flow_rules._contains(text, flow_rules.OWN_TRANSFER_MARKERS)
-            | flow_rules.own_name_mask(out["description"], own_names, _norm)),
+        (
+            "propria",
+            flow_rules._contains(text, flow_rules.OWN_TRANSFER_MARKERS)
+            | flow_rules.own_name_mask(
+                out["description"],
+                [*own_names, *flow_rules.detect_own_names(out, _norm)],
+                _norm,
+            ),
+        ),
         ("cartao", flow_rules._contains(text, flow_rules.CARD_MARKERS)),
     ):
         reason = reason.mask(mask & reason.eq(""), label)
-    paired = flow_rules.pair_transfers(out, text, reason.ne(""), is_credit_dir)
+    # o outro lado de uma transferência própria já pode ter sido marcado pelo banco ("Same person
+    # transfer"); ele continua valendo como par da entrada/saída correspondente na outra conta.
+    paired = flow_rules.pair_transfers(
+        out,
+        text,
+        reason.isin(["day_trade", "cartao", "investimento", "emprestimo"]),
+        is_credit_dir,
+    )
     reason = reason.mask(paired & reason.eq(""), "pareada")
 
-    internal = reason.isin(["cartao", "propria", "pareada", "investimento"])
+    internal = reason.isin(
+        ["cartao", "propria", "pareada", "investimento", "emprestimo"]
+    )
     day_trade = reason.eq("day_trade")
     skip = internal | day_trade
 
     out["income"] = np.where(~is_card & is_credit_dir & ~skip, out["amount"], 0.0)
     out["expense"] = np.where(~skip & ~is_credit_dir, out["amount"], 0.0)
     # Crédito no cartão só reduz despesa se for estorno; o resto é pagamento de fatura (ignorado).
-    out["expense"] = out["expense"] - np.where(is_card & is_credit_dir & refund & ~skip, out["amount"], 0.0)
+    out["expense"] = out["expense"] - np.where(
+        is_card & is_credit_dir & refund & ~skip, out["amount"], 0.0
+    )
     out["category"] = out["category"].fillna("Sem categoria")
     out["reason"] = reason
     return flow_rules.net_day_trade(out, day_trade) if net_day_trade else out
@@ -159,11 +189,15 @@ def monthly_table(flows: pd.DataFrame) -> pd.DataFrame:
     columns = ["income", "expense", "savings", "savings_rate"]
     if flows.empty:
         return pd.DataFrame(columns=columns, index=pd.PeriodIndex([], freq="M"))
-    grouped = flows.groupby(flows["date"].dt.to_period("M"))[["income", "expense"]].sum()
+    grouped = flows.groupby(flows["date"].dt.to_period("M"))[
+        ["income", "expense"]
+    ].sum()
     full_index = pd.period_range(grouped.index.min(), grouped.index.max(), freq="M")
     table = grouped.reindex(full_index, fill_value=0.0)
     table["savings"] = table["income"] - table["expense"]
-    table["savings_rate"] = np.where(table["income"] > 0, table["savings"] / table["income"], np.nan)
+    table["savings_rate"] = np.where(
+        table["income"] > 0, table["savings"] / table["income"], np.nan
+    )
     return table
 
 
@@ -181,7 +215,9 @@ def price_payment(balance: float, monthly_rate: float, n: int) -> float:
     return balance * monthly_rate / (1.0 - (1.0 + monthly_rate) ** -n)
 
 
-def principal_schedule(balance: float, monthly_rate: float | None, n: int, horizon: int) -> np.ndarray:
+def principal_schedule(
+    balance: float, monthly_rate: float | None, n: int, horizon: int
+) -> np.ndarray:
     """Principal amortizado em cada mês (tabela Price); sem taxa, amortização linear."""
     schedule = np.zeros(horizon)
     if n <= 0 or balance <= 0:
@@ -236,16 +272,24 @@ def expected_gross_return(pos: Position, a: MarketAssumptions) -> tuple[float, b
         return a.funds_return_annual, False
 
     if pos.indexer in {"CDI", "SELIC"} and pos.rate:
-        multiple = pos.rate / 100 if pos.rate >= 5 else pos.rate  # 110 ou 1.10 -> 110% do CDI
+        multiple = (
+            pos.rate / 100 if pos.rate >= 5 else pos.rate
+        )  # 110 ou 1.10 -> 110% do CDI
         return a.cdi_annual * multiple, True
     if pos.indexer == "PRE":
-        pre = next((v for v in (pos.fixed_annual_rate, pos.annual_rate, pos.rate) if v), None)
+        pre = next(
+            (v for v in (pos.fixed_annual_rate, pos.annual_rate, pos.rate) if v), None
+        )
         if pre:
             return pre / 100, True
     if pos.indexer == "IPCA":
-        spread = next((v for v in (pos.fixed_annual_rate, pos.rate) if v is not None), 0.0)
+        spread = next(
+            (v for v in (pos.fixed_annual_rate, pos.rate) if v is not None), 0.0
+        )
         return (1 + a.ipca_annual) * (1 + spread / 100) - 1, True
-    reported = next((v for v in (pos.annual_rate, pos.last_twelve_months_rate) if v), None)
+    reported = next(
+        (v for v in (pos.annual_rate, pos.last_twelve_months_rate) if v), None
+    )
     if reported:
         return reported / 100, True
     return a.cdi_annual, False
@@ -339,21 +383,34 @@ def evaluate_debt_vs_investment(
     - VPL da vantagem de manter = (B_T − A_T) / (1 + desconto)^T
     """
     years = horizon_months / 12.0
-    tax_now = 0.0 if tax_exempt else ir_regressive_rate(days_held_now) * max(gross_now - invested, 0.0)
+    tax_now = (
+        0.0
+        if tax_exempt
+        else ir_regressive_rate(days_held_now) * max(gross_now - invested, 0.0)
+    )
     net_now = gross_now - tax_now
     value_amortize = net_now * (1.0 + debt_annual_rate) ** years
 
     gross_horizon = gross_now * (1.0 + gross_annual_return) ** years
     days_horizon = days_held_now + horizon_months * DAYS_PER_MONTH
-    tax_horizon = 0.0 if tax_exempt else ir_regressive_rate(days_horizon) * max(gross_horizon - invested, 0.0)
+    tax_horizon = (
+        0.0
+        if tax_exempt
+        else ir_regressive_rate(days_horizon) * max(gross_horizon - invested, 0.0)
+    )
     value_keep = gross_horizon - tax_horizon
 
-    net_annual = (value_keep / net_now) ** (1.0 / years) - 1.0 if net_now > 0 and value_keep > 0 else float("nan")
+    net_annual = (
+        (value_keep / net_now) ** (1.0 / years) - 1.0
+        if net_now > 0 and value_keep > 0
+        else float("nan")
+    )
     return {
         "net_now": net_now,
         "value_amortize": value_amortize,
         "value_keep": value_keep,
-        "vpl_advantage_keep": (value_keep - value_amortize) / (1.0 + discount_annual) ** years,
+        "vpl_advantage_keep": (value_keep - value_amortize)
+        / (1.0 + discount_annual) ** years,
         "net_annual_return": net_annual,
     }
 
@@ -440,7 +497,12 @@ def simulate_payoff(
         if mode != "baseline":
             budget = capacity - spent
             if priority is not None:
-                ranked = sorted(active, key=lambda d: priority.index(d.id) if d.id in priority else len(priority))
+                ranked = sorted(
+                    active,
+                    key=lambda d: (
+                        priority.index(d.id) if d.id in priority else len(priority)
+                    ),
+                )
             elif mode == "avalanche":
                 ranked = sorted(active, key=lambda d: (-d.rate, balance[d.id]))
             else:
@@ -497,19 +559,35 @@ def category_zscores(
 
     spend = flows[flows["expense"] != 0]
     if spend.empty:
-        return [], [str(m) for m in base_months], warnings + ["Sem despesas no período."]
-    by_month =spend.pivot_table(
-        index=spend["date"].dt.to_period("M"), columns="category", values="expense", aggfunc="sum", fill_value=0.0
+        return (
+            [],
+            [str(m) for m in base_months],
+            warnings + ["Sem despesas no período."],
+        )
+    by_month = spend.pivot_table(
+        index=spend["date"].dt.to_period("M"),
+        columns="category",
+        values="expense",
+        aggfunc="sum",
+        fill_value=0.0,
     )
     current = pd.Period(as_of, "M")
-    current_spend = by_month.loc[current] if current in by_month.index else pd.Series(dtype=float)
-    baseline = by_month.reindex(base_months, fill_value=0.0)  # mês sem gasto na categoria = 0
+    current_spend = (
+        by_month.loc[current] if current in by_month.index else pd.Series(dtype=float)
+    )
+    baseline = by_month.reindex(
+        base_months, fill_value=0.0
+    )  # mês sem gasto na categoria = 0
 
     days_in_month = current.days_in_month
     projectable = as_of.day >= min_days_for_projection
     results: list[CategoryAnomaly] = []
     for category in sorted(set(baseline.columns) | set(current_spend.index)):
-        series = baseline[category] if category in baseline.columns else pd.Series(0.0, index=base_months)
+        series = (
+            baseline[category]
+            if category in baseline.columns
+            else pd.Series(0.0, index=base_months)
+        )
         mtd = float(current_spend.get(category, 0.0))
         projected = mtd * days_in_month / as_of.day if projectable else mtd
         mean = float(series.mean()) if len(series) else 0.0
@@ -539,7 +617,32 @@ def category_zscores(
 # 2b. Explorador de gastos: agrupamento por comerciante e recorrentes
 # ===========================================================================
 _MERCHANT_STOP: Final = frozenset(
-    ["compra", "no", "debito", "credito", "pix", "enviado", "recebido", "transferencia", "enviada", "recebida", "pelo", "pagamento", "de", "em", "a", "pag", "pg", "mp", "ifd", "da", "do", "dos", "das", "para"]
+    [
+        "compra",
+        "no",
+        "debito",
+        "credito",
+        "pix",
+        "enviado",
+        "recebido",
+        "transferencia",
+        "enviada",
+        "recebida",
+        "pelo",
+        "pagamento",
+        "de",
+        "em",
+        "a",
+        "pag",
+        "pg",
+        "mp",
+        "ifd",
+        "da",
+        "do",
+        "dos",
+        "das",
+        "para",
+    ]
 )
 _WEEKDAYS_PT: Final = ("Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom")
 
@@ -549,14 +652,20 @@ def merchant_key(description: str | None) -> str:
 
     "Compra no débito - Padaria Pão 123" e "COMPRA NO DEBITO PADARIA PAO 456" caem no mesmo grupo.
     """
-    tokens = [t for t in re.sub(r"[^a-z0-9]+", " ", _norm(description or "")).split() if not t.isdigit()]
+    tokens = [
+        t
+        for t in re.sub(r"[^a-z0-9]+", " ", _norm(description or "")).split()
+        if not t.isdigit()
+    ]
     trimmed = list(tokens)
     while trimmed and trimmed[0] in _MERCHANT_STOP:
         trimmed.pop(0)
     return " ".join((trimmed or tokens)[:3]) or "sem descricao"
 
 
-def recurring_groups(frame: pd.DataFrame, value: str = "expense") -> list[dict[str, Any]]:
+def recurring_groups(
+    frame: pd.DataFrame, value: str = "expense"
+) -> list[dict[str, Any]]:
     """Grupos que se repetem todo mês com valor parecido (assinaturas, mensalidades, aluguel, salário...).
 
     Exige: >= 3 meses distintos, presença em >= 60% dos meses do intervalo, no máximo ~2 lançamentos
@@ -615,11 +724,17 @@ class QuantEngine:
 
     # -- carga de dados -----------------------------------------------------
     async def _flows(self, as_of: date) -> pd.DataFrame:
-        since = (pd.Timestamp(as_of) - pd.DateOffset(months=HISTORY_MONTHS_LOADED)).replace(day=1)
+        since = (
+            pd.Timestamp(as_of) - pd.DateOffset(months=HISTORY_MONTHS_LOADED)
+        ).replace(day=1)
         return await self._load_flows(since.to_pydatetime())
 
     async def _load_flows(
-        self, since: datetime, until: datetime | None = None, *, net_day_trade: bool = True
+        self,
+        since: datetime,
+        until: datetime | None = None,
+        *,
+        net_day_trade: bool = True,
     ) -> pd.DataFrame:
         """Transações em [since, until) já classificadas em receita/despesa."""
         statement = (
@@ -636,10 +751,23 @@ class QuantEngine:
             .join(Account, Account.id == Transaction.account_id)
             .where(Transaction.date >= since)
         )
-        if until is not None:
-            statement = statement.where(Transaction.date < until)
+        # Parcelas futuras do cartão (ex.: 3/10 em 30/11) ainda não foram gastas.
+        tomorrow = datetime.combine(
+            date.today() + timedelta(days=1), datetime.min.time()
+        )
+        until = tomorrow if until is None else min(until, tomorrow)
+        statement = statement.where(Transaction.date < until)
         rows = (await self._session.execute(statement)).all()
-        columns = ["date", "amount", "type", "category", "description", "account_type", "tx_id", "account_name"]
+        columns = [
+            "date",
+            "amount",
+            "type",
+            "category",
+            "description",
+            "account_type",
+            "tx_id",
+            "account_name",
+        ]
         raw = pd.DataFrame([tuple(r) for r in rows], columns=columns)
         if raw.empty:
             return pd.DataFrame(
@@ -652,7 +780,9 @@ class QuantEngine:
                 }
             )
         raw["amount"] = raw["amount"].map(float)
-        return classify_flows(raw, get_settings().own_name_list, net_day_trade=net_day_trade)
+        return classify_flows(
+            raw, get_settings().own_name_list, net_day_trade=net_day_trade
+        )
 
     async def _liquidity(self, include_investments: bool) -> float:
         bank = await self._session.scalar(
@@ -663,11 +793,17 @@ class QuantEngine:
         total = float(bank or 0)
         if include_investments:
             positions = await self._positions()
-            total += sum(p.net for p in positions if p.asset_class in {"RENDA_FIXA", "FUNDOS"})
+            total += sum(
+                p.net for p in positions if p.asset_class in {"RENDA_FIXA", "FUNDOS"}
+            )
         return total
 
     async def _positions(self) -> list[Position]:
-        rows = (await self._session.scalars(select(Investment).where(Investment.is_active.is_(True)))).all()
+        rows = (
+            await self._session.scalars(
+                select(Investment).where(Investment.is_active.is_(True))
+            )
+        ).all()
         out: list[Position] = []
         for inv in rows:
             gross = _num(inv.gross_balance)
@@ -697,7 +833,9 @@ class QuantEngine:
         return list(
             (
                 await self._session.scalars(
-                    select(Loan).where(Loan.is_active.is_(True), Loan.outstanding_balance.is_not(None))
+                    select(Loan).where(
+                        Loan.is_active.is_(True), Loan.outstanding_balance.is_not(None)
+                    )
                 )
             ).all()
         )
@@ -706,7 +844,9 @@ class QuantEngine:
         return list(
             (
                 await self._session.scalars(
-                    select(Account).where(Account.type == "CREDIT", Account.is_active.is_(True))
+                    select(Account).where(
+                        Account.type == "CREDIT", Account.is_active.is_(True)
+                    )
                 )
             ).all()
         )
@@ -721,18 +861,28 @@ class QuantEngine:
     # -- 0. para onde foi o dinheiro (visão anual) ---------------------------
     async def year_summary(self, year: int, today: date) -> YearSummaryResponse:
         """Receitas, despesas e categorias x mês de um ano civil (mesmas regras do fluxo de caixa)."""
-        year_rows = await self._session.execute(select(extract("year", Transaction.date)).distinct())
-        available = sorted({int(r[0]) for r in year_rows.all() if r[0] is not None}, reverse=True)
+        year_rows = await self._session.execute(
+            select(extract("year", Transaction.date)).distinct()
+        )
+        available = sorted(
+            {int(r[0]) for r in year_rows.all() if r[0] is not None}, reverse=True
+        )
 
         flows = await self._load_flows(datetime(year, 1, 1), datetime(year + 1, 1, 1))
         warnings: list[str] = []
-        months_with_data = sorted({int(m) for m in flows["date"].dt.month.unique()}) if not flows.empty else []
+        months_with_data = (
+            sorted({int(m) for m in flows["date"].dt.month.unique()})
+            if not flows.empty
+            else []
+        )
         if not months_with_data:
             warnings.append(f"Nenhuma transação importada em {year}.")
 
         flows = flows.assign(month=flows["date"].dt.month)
         by_month = (
-            flows.groupby("month")[["income", "expense"]].sum().reindex(range(1, 13), fill_value=0.0)
+            flows.groupby("month")[["income", "expense"]]
+            .sum()
+            .reindex(range(1, 13), fill_value=0.0)
             if not flows.empty
             else pd.DataFrame(0.0, index=range(1, 13), columns=["income", "expense"])
         )
@@ -762,7 +912,9 @@ class QuantEngine:
                     YearCategory(
                         category=str(name),
                         total=_r0(total),
-                        share=_r(total / expense_total, 4) if expense_total > 0 else None,
+                        share=_r(total / expense_total, 4)
+                        if expense_total > 0
+                        else None,
                         monthly=[_r0(v) for v in row.tolist()],
                     )
                 )
@@ -770,25 +922,34 @@ class QuantEngine:
 
         if months_with_data:
             if year == today.year:
-                warnings.append(f"Ano em andamento: {MONTH_NAMES_PT[today.month - 1]} está parcial.")
+                warnings.append(
+                    f"Ano em andamento: {MONTH_NAMES_PT[today.month - 1]} está parcial."
+                )
             if months_with_data[0] > 1:
                 warnings.append(
                     f"O histórico importado de {year} começa em {MONTH_NAMES_PT[months_with_data[0] - 1]}; "
                     "os meses anteriores não têm transações."
                 )
-            uncategorized = next((c.total for c in categories if c.category == UNCATEGORIZED), 0.0)
+            uncategorized = next(
+                (c.total for c in categories if c.category == UNCATEGORIZED), 0.0
+            )
             if expense_total > 0 and uncategorized / expense_total >= 0.15:
-                warnings.append(f"{uncategorized / expense_total:.0%} das despesas estão sem categoria.")
+                warnings.append(
+                    f"{uncategorized / expense_total:.0%} das despesas estão sem categoria."
+                )
 
         return YearSummaryResponse(
             year=year,
             available_years=available,
-            is_partial=year >= today.year or (bool(months_with_data) and months_with_data[0] > 1),
+            is_partial=year >= today.year
+            or (bool(months_with_data) and months_with_data[0] > 1),
             months_with_data=months_with_data,
             income_total=_r0(income_total),
             expense_total=_r0(expense_total),
             savings_total=_r0(income_total - expense_total),
-            savings_rate=_r((income_total - expense_total) / income_total, 4) if income_total > 0 else None,
+            savings_rate=_r((income_total - expense_total) / income_total, 4)
+            if income_total > 0
+            else None,
             months=months,
             categories=categories,
             warnings=warnings,
@@ -803,19 +964,32 @@ class QuantEngine:
         base = complete_months(table, as_of, window)
         warnings: list[str] = []
         if len(base) < window:
-            warnings.append(f"Apenas {len(base)} mês(es) fechado(s) disponível(is) (janela pedida: {window}).")
+            warnings.append(
+                f"Apenas {len(base)} mês(es) fechado(s) disponível(is) (janela pedida: {window})."
+            )
 
         liquidity = await self._liquidity(include_investments)
-        income_sum, expense_sum = float(base["income"].sum()), float(base["expense"].sum())
-        savings_rate = (income_sum - expense_sum) / income_sum if income_sum > 0 else None
+        income_sum, expense_sum = (
+            float(base["income"].sum()),
+            float(base["expense"].sum()),
+        )
+        savings_rate = (
+            (income_sum - expense_sum) / income_sum if income_sum > 0 else None
+        )
 
         burn_monthly = float(base["expense"].mean()) if len(base) else None
         std = float(base["expense"].std(ddof=1)) if len(base) >= 2 else None
         days = sum(p.days_in_month for p in base.index)
         burn_daily = expense_sum / days if days else None
-        burn_stress = burn_monthly + 2 * std if burn_monthly is not None and std is not None else None
+        burn_stress = (
+            burn_monthly + 2 * std
+            if burn_monthly is not None and std is not None
+            else None
+        )
         if std is None:
-            warnings.append("Menos de 2 meses fechados: cenário de estresse (+2σ) indisponível.")
+            warnings.append(
+                "Menos de 2 meses fechados: cenário de estresse (+2σ) indisponível."
+            )
 
         def runway(burn: float | None) -> float | None:
             if not burn or burn <= 0:
@@ -831,7 +1005,9 @@ class QuantEngine:
             income=_r0(cur_income),
             expense=_r0(cur_expense),
             savings=_r0(cur_income - cur_expense),
-            savings_rate=_r((cur_income - cur_expense) / cur_income, 4) if cur_income > 0 else None,
+            savings_rate=_r((cur_income - cur_expense) / cur_income, 4)
+            if cur_income > 0
+            else None,
         )
         return CashflowResponse(
             as_of=as_of,
@@ -863,9 +1039,15 @@ class QuantEngine:
         self, as_of: date, *, window: int = 6, threshold: float = 2.0
     ) -> AnomaliesResponse:
         flows = await self._flows(as_of)
-        categories, months, warnings = category_zscores(flows, as_of, window=window, threshold=threshold)
+        categories, months, warnings = category_zscores(
+            flows, as_of, window=window, threshold=threshold
+        )
         return AnomaliesResponse(
-            as_of=as_of, baseline_months=months, z_threshold=threshold, categories=categories, warnings=warnings
+            as_of=as_of,
+            baseline_months=months,
+            z_threshold=threshold,
+            categories=categories,
+            warnings=warnings,
         )
 
     # -- 2. Monte Carlo -----------------------------------------------------
@@ -891,7 +1073,9 @@ class QuantEngine:
         positions = await self._positions()
         mu_p, sigma_p, defaulted = portfolio_return_and_vol(positions, assumptions)
         if defaulted:
-            warnings.append(f"{defaulted} posição(ões) de renda fixa sem taxa legível: assumido 100% do CDI.")
+            warnings.append(
+                f"{defaulted} posição(ões) de renda fixa sem taxa legível: assumido 100% do CDI."
+            )
         if not positions:
             warnings.append("Nenhum investimento ativo: carteira com valor zero.")
 
@@ -906,13 +1090,21 @@ class QuantEngine:
         principal = np.zeros(max_h)
         for loan in loans:
             n = loan.remaining_installments
-            if n is None and loan.total_installments is not None and loan.paid_installments is not None:
+            if (
+                n is None
+                and loan.total_installments is not None
+                and loan.paid_installments is not None
+            ):
                 n = loan.total_installments - loan.paid_installments
             if not n:
-                warnings.append(f"Empréstimo {loan.id[:8]}: parcelas restantes desconhecidas; sem amortização modelada.")
+                warnings.append(
+                    f"Empréstimo {loan.id[:8]}: parcelas restantes desconhecidas; sem amortização modelada."
+                )
                 continue
             rate = (_num(loan.cet_monthly) or 0.0) / 100
-            principal += principal_schedule(_num(loan.outstanding_balance) or 0.0, rate, int(n), max_h)
+            principal += principal_schedule(
+                _num(loan.outstanding_balance) or 0.0, rate, int(n), max_h
+            )
 
         paths = simulate_net_worth(
             initial_portfolio=portfolio_value,
@@ -941,7 +1133,12 @@ class QuantEngine:
             )
         fan_percentiles = np.percentile(paths, [10, 50, 90], axis=0)
         fan = [
-            FanPoint(months=t + 1, p10=_r0(fan_percentiles[0, t]), p50=_r0(fan_percentiles[1, t]), p90=_r0(fan_percentiles[2, t]))
+            FanPoint(
+                months=t + 1,
+                p10=_r0(fan_percentiles[0, t]),
+                p50=_r0(fan_percentiles[1, t]),
+                p90=_r0(fan_percentiles[2, t]),
+            )
             for t in range(paths.shape[1])
         ]
         return MonteCarloResponse(
@@ -966,12 +1163,18 @@ class QuantEngine:
         )
 
     # -- 3. arbitragem dívida x investimento --------------------------------
-    async def arbitrage(self, as_of: date, assumptions: MarketAssumptions) -> ArbitrageResponse:
+    async def arbitrage(
+        self, as_of: date, assumptions: MarketAssumptions
+    ) -> ArbitrageResponse:
         warnings: list[str] = []
         loans = await self._loans()
-        positions = [p for p in await self._positions() if p.asset_class == "RENDA_FIXA"]
+        positions = [
+            p for p in await self._positions() if p.asset_class == "RENDA_FIXA"
+        ]
         if not positions:
-            warnings.append("Sem posições de renda fixa: renda variável e fundos não entram na comparação (risco/liquidez distintos).")
+            warnings.append(
+                "Sem posições de renda fixa: renda variável e fundos não entram na comparação (risco/liquidez distintos)."
+            )
         discount = assumptions.cdi_annual * (1 - FLAT_TAX_RATE)
 
         result: list[LoanArbitrage] = []
@@ -993,9 +1196,13 @@ class QuantEngine:
                 notes: list[str] = []
                 if not from_data:
                     notes.append("Taxa do papel indisponível: assumido 100% do CDI.")
-                days_held = float((as_of - pos.issue_date).days) if pos.issue_date else 0.0
+                days_held = (
+                    float((as_of - pos.issue_date).days) if pos.issue_date else 0.0
+                )
                 if pos.issue_date is None and not pos.tax_exempt:
-                    notes.append("Data de aplicação desconhecida: IR calculado como se tivesse 0 dia.")
+                    notes.append(
+                        "Data de aplicação desconhecida: IR calculado como se tivesse 0 dia."
+                    )
                 invested = pos.invested if pos.invested is not None else pos.gross
                 ev = evaluate_debt_vs_investment(
                     gross_now=pos.gross,
@@ -1007,7 +1214,9 @@ class QuantEngine:
                     debt_annual_rate=debt_rate,
                     discount_annual=discount,
                 )
-                fraction = min(1.0, outstanding / ev["net_now"]) if ev["net_now"] > 0 else 0.0
+                fraction = (
+                    min(1.0, outstanding / ev["net_now"]) if ev["net_now"] > 0 else 0.0
+                )
                 net_annual = ev["net_annual_return"]
                 rows.append(
                     ArbitrageRow(
@@ -1017,17 +1226,27 @@ class QuantEngine:
                         gross_annual_return=_r0(gross_return, 4),
                         net_annual_return_if_kept=_r0(net_annual, 4),
                         cet_annual=_r0(debt_rate, 4),
-                        spread_net_vs_cet=_r0(net_annual - debt_rate, 4) if math.isfinite(net_annual) else 0.0,
+                        spread_net_vs_cet=_r0(net_annual - debt_rate, 4)
+                        if math.isfinite(net_annual)
+                        else 0.0,
                         capital_considered=_r0(ev["net_now"] * fraction),
                         value_if_amortize=_r0(ev["value_amortize"] * fraction),
                         value_if_keep=_r0(ev["value_keep"] * fraction),
                         vpl_advantage_keep=_r0(ev["vpl_advantage_keep"] * fraction),
-                        decision="MANTER_INVESTIDO" if ev["vpl_advantage_keep"] > 0 else "AMORTIZAR_DIVIDA",
+                        decision="MANTER_INVESTIDO"
+                        if ev["vpl_advantage_keep"] > 0
+                        else "AMORTIZAR_DIVIDA",
                         notes=notes,
                     )
                 )
             to_liquidate = [r for r in rows if r.decision == "AMORTIZAR_DIVIDA"]
-            suggested = min(to_liquidate, key=lambda r: r.net_annual_return_if_kept).investment_id if to_liquidate else None
+            suggested = (
+                min(
+                    to_liquidate, key=lambda r: r.net_annual_return_if_kept
+                ).investment_id
+                if to_liquidate
+                else None
+            )
             rows.sort(key=lambda r: r.vpl_advantage_keep)
             result.append(
                 LoanArbitrage(
@@ -1041,11 +1260,16 @@ class QuantEngine:
                 )
             )
         return ArbitrageResponse(
-            as_of=as_of, discount_rate_annual=_r0(discount, 4), loans=result, warnings=warnings
+            as_of=as_of,
+            discount_rate_annual=_r0(discount, 4),
+            loans=result,
+            warnings=warnings,
         )
 
     # -- 3b. plano de quitação ------------------------------------------------
-    async def loan_strategy(self, as_of: date, extra: float = 0.0) -> LoanStrategyResponse:
+    async def loan_strategy(
+        self, as_of: date, extra: float = 0.0
+    ) -> LoanStrategyResponse:
         warnings: list[str] = []
         debts: list[DebtSpec] = []
         for loan in await self._loans():
@@ -1053,16 +1277,28 @@ class QuantEngine:
             if balance <= 0:
                 continue
             n = loan.remaining_installments
-            if n is None and loan.total_installments is not None and loan.paid_installments is not None:
+            if (
+                n is None
+                and loan.total_installments is not None
+                and loan.paid_installments is not None
+            ):
                 n = loan.total_installments - loan.paid_installments
             label = loan.product_name or loan.contract_number or loan.id[:8]
             if not n or n <= 0:
-                warnings.append(f"{label}: parcelas restantes desconhecidas; fora do plano.")
+                warnings.append(
+                    f"{label}: parcelas restantes desconhecidas; fora do plano."
+                )
                 continue
             cet_monthly = _num(loan.cet_monthly)
             if cet_monthly is None:
-                warnings.append(f"{label}: sem CET; simulado com juros zero (subestima o custo).")
-            amortization = "SAC" if "SAC" in (loan.amortization_scheduled or "").upper() else "PRICE"
+                warnings.append(
+                    f"{label}: sem CET; simulado com juros zero (subestima o custo)."
+                )
+            amortization = (
+                "SAC"
+                if "SAC" in (loan.amortization_scheduled or "").upper()
+                else "PRICE"
+            )
             debts.append(
                 DebtSpec(
                     id=loan.id,
@@ -1093,17 +1329,24 @@ class QuantEngine:
         names = {d.id: d.name for d in debts}
 
         def result(key: str, label: str, sim: PayoffSim) -> StrategyResult:
-            order = sorted(sim.payoff_month.items(), key=lambda kv: (kv[1], names[kv[0]]))
+            order = sorted(
+                sim.payoff_month.items(), key=lambda kv: (kv[1], names[kv[0]])
+            )
             return StrategyResult(
                 key=key,
                 label=label,
                 months_to_debt_free=sim.months if sim.finished else None,
-                debt_free_on=add_months_label(as_of, sim.months) if sim.finished else None,
+                debt_free_on=add_months_label(as_of, sim.months)
+                if sim.finished
+                else None,
                 total_interest=_r0(sim.total_interest),
                 interest_saved=_r0(baseline.total_interest - sim.total_interest),
                 months_saved=baseline.months - sim.months,
                 payoff_order=[
-                    PayoffStep(loan_id=i, name=names[i], month=m, on=add_months_label(as_of, m)) for i, m in order
+                    PayoffStep(
+                        loan_id=i, name=names[i], month=m, on=add_months_label(as_of, m)
+                    )
+                    for i, m in order
                 ],
             )
 
@@ -1125,7 +1368,9 @@ class QuantEngine:
                     loan_id=d.id,
                     name=d.name,
                     balance=_r0(d.balance),
-                    cet_annual=_r(((1 + d.rate) ** 12 - 1) * 100, 4) if d.rate else None,
+                    cet_annual=_r(((1 + d.rate) ** 12 - 1) * 100, 4)
+                    if d.rate
+                    else None,
                     amortization=d.amortization,
                     remaining_installments=d.n,
                     installment_first=_r0(baseline.paid[0][k]),
@@ -1136,7 +1381,9 @@ class QuantEngine:
                 )
             )
 
-        length = max(len(baseline.remaining), len(avalanche.remaining), len(snowball.remaining))
+        length = max(
+            len(baseline.remaining), len(avalanche.remaining), len(snowball.remaining)
+        )
 
         def at(sim: PayoffSim, m: int) -> float:
             return _r0(sim.remaining[m]) if m < len(sim.remaining) else 0.0
@@ -1148,6 +1395,7 @@ class QuantEngine:
             )
             for m in range(length)
         ]  # fmt: skip
+
         def split(sim: PayoffSim, m: int) -> tuple[float, float]:
             """(juros, principal) pagos no mês m (1..); zeros depois de quitar."""
             if m > len(sim.paid):
@@ -1157,7 +1405,11 @@ class QuantEngine:
 
         cost_curve = []
         for m in range(1, length):
-            (bi, bp), (ai, ap), (si, sp) = split(baseline, m), split(avalanche, m), split(snowball, m)
+            (bi, bp), (ai, ap), (si, sp) = (
+                split(baseline, m),
+                split(avalanche, m),
+                split(snowball, m),
+            )
             cost_curve.append(
                 CostPoint(
                     month=m, on=add_months_label(as_of, m),
@@ -1172,7 +1424,9 @@ class QuantEngine:
                 on=add_months_label(as_of, m + 1),
                 total=_r0(sum(row)),
                 by_loan=[_r0(v) for v in row],
-                commitment=_r(sum(row) / avg_income, 4) if avg_income and avg_income > 0 else None,
+                commitment=_r(sum(row) / avg_income, 4)
+                if avg_income and avg_income > 0
+                else None,
             )
             for m, row in enumerate(baseline.paid)
         ]
@@ -1191,16 +1445,25 @@ class QuantEngine:
             warnings=warnings,
         )
 
-    async def spending(self, year: int, month: int | None, today: date) -> SpendingResponse:
+    async def spending(
+        self, year: int, month: int | None, today: date
+    ) -> SpendingResponse:
         """Explorador de gastos de um ano (ou de um mês dele): categorias, comerciantes, dias e recorrentes."""
-        year_rows = await self._session.execute(select(extract("year", Transaction.date)).distinct())
-        available = sorted({int(r[0]) for r in year_rows.all() if r[0] is not None}, reverse=True)
+        year_rows = await self._session.execute(
+            select(extract("year", Transaction.date)).distinct()
+        )
+        available = sorted(
+            {int(r[0]) for r in year_rows.all() if r[0] is not None}, reverse=True
+        )
 
         flows = await self._load_flows(datetime(year, 1, 1), datetime(year + 1, 1, 1))
         if month is None:
             start, end = date(year, 1, 1), date(year, 12, 31)
         else:
-            start, end = date(year, month, 1), date(year, month, monthrange(year, month)[1])
+            start, end = (
+                date(year, month, 1),
+                date(year, month, monthrange(year, month)[1]),
+            )
         warnings: list[str] = []
         empty = SpendingResponse(
             year=year, month=month, available_years=available, period_start=start, period_end=end,
@@ -1222,8 +1485,15 @@ class QuantEngine:
         in_period = flows if month is None else flows[flows["month"] == month]
         spend = in_period[in_period["expense"] != 0]
         if spend.empty and in_period["income"].sum() == 0:
-            return empty.model_copy(update={"warnings": [f"Nenhuma transação em {MONTH_NAMES_PT[month - 1]}/{year}."]
-                                            if month else empty.warnings})
+            return empty.model_copy(
+                update={
+                    "warnings": [
+                        f"Nenhuma transação em {MONTH_NAMES_PT[month - 1]}/{year}."
+                    ]
+                    if month
+                    else empty.warnings
+                }
+            )
 
         income_total = float(in_period["income"].sum())
         expense_total = float(spend["expense"].sum())
@@ -1234,8 +1504,14 @@ class QuantEngine:
                 category=str(row.category), account=str(row.account_name), amount=_r0(row.expense),
             )  # fmt: skip
 
-        def merchants(frame: pd.DataFrame, base: float, limit: int) -> list[SpendMerchant]:
-            grouped = frame.groupby("key")["expense"].agg(["sum", "count"]).sort_values("sum", ascending=False)
+        def merchants(
+            frame: pd.DataFrame, base: float, limit: int
+        ) -> list[SpendMerchant]:
+            grouped = (
+                frame.groupby("key")["expense"]
+                .agg(["sum", "count"])
+                .sort_values("sum", ascending=False)
+            )
             return [
                 SpendMerchant(
                     name=str(k).title(), total=_r0(r["sum"]), count=int(r["count"]),
@@ -1254,7 +1530,11 @@ class QuantEngine:
             total = float(frame["expense"].sum())
             if total <= 0:
                 continue
-            monthly = year_monthly.loc[name].tolist() if name in year_monthly.index else [0.0] * 12
+            monthly = (
+                year_monthly.loc[name].tolist()
+                if name in year_monthly.index
+                else [0.0] * 12
+            )
             positive = frame[frame["expense"] > 0]
             categories.append(
                 SpendCategory(
@@ -1268,13 +1548,22 @@ class QuantEngine:
             )  # fmt: skip
         categories.sort(key=lambda c: -c.total)
 
-        daily = spend.assign(day=spend["date"].dt.normalize()).groupby("day")["expense"].agg(["sum", "count"])
-        days = [SpendDay(date=d.date(), expense=_r0(r["sum"]), count=int(r["count"])) for d, r in daily.iterrows()]
+        daily = (
+            spend.assign(day=spend["date"].dt.normalize())
+            .groupby("day")["expense"]
+            .agg(["sum", "count"])
+        )
+        days = [
+            SpendDay(date=d.date(), expense=_r0(r["sum"]), count=int(r["count"]))
+            for d, r in daily.iterrows()
+        ]
 
         weekdays: list[SpendWeekday] = []
         first, last = spend["date"].min().normalize(), spend["date"].max().normalize()
         span = pd.date_range(first, last, freq="D")
-        by_weekday = spend.groupby(spend["date"].dt.weekday)["expense"].agg(["sum", "count"])
+        by_weekday = spend.groupby(spend["date"].dt.weekday)["expense"].agg(
+            ["sum", "count"]
+        )
         for wd in range(7):
             occurrences = int((span.weekday == wd).sum()) or 1
             total = float(by_weekday["sum"].get(wd, 0.0))
@@ -1285,9 +1574,13 @@ class QuantEngine:
                 )
             )  # fmt: skip
 
-        uncategorized = next((c.total for c in categories if c.category == UNCATEGORIZED), 0.0)
+        uncategorized = next(
+            (c.total for c in categories if c.category == UNCATEGORIZED), 0.0
+        )
         if expense_total > 0 and uncategorized / expense_total >= 0.15:
-            warnings.append(f"{uncategorized / expense_total:.0%} das despesas estão sem categoria.")
+            warnings.append(
+                f"{uncategorized / expense_total:.0%} das despesas estão sem categoria."
+            )
         if recurring:
             warnings.append(
                 "Gastos recorrentes são detectados pelo nome do estabelecimento e pela regularidade do valor; "
@@ -1297,7 +1590,9 @@ class QuantEngine:
         positive_spend = spend[spend["expense"] > 0]
         # "Avulsos": fora os gastos fixos (aluguel, assinaturas), que já têm bloco próprio e dominariam a lista.
         recurring_names = {r.name for r in recurring}
-        one_off = positive_spend[~positive_spend["key"].map(lambda k: str(k).title() in recurring_names)]
+        one_off = positive_spend[
+            ~positive_spend["key"].map(lambda k: str(k).title() in recurring_names)
+        ]
         return SpendingResponse(
             year=year, month=month, available_years=available, period_start=start, period_end=end,
             income_total=_r0(income_total), expense_total=_r0(expense_total),
@@ -1309,7 +1604,9 @@ class QuantEngine:
         )  # fmt: skip
 
     # -- 4. risco de crédito ------------------------------------------------
-    async def credit_risk(self, as_of: date, *, include_investments: bool = False) -> CreditRiskResponse:
+    async def credit_risk(
+        self, as_of: date, *, include_investments: bool = False
+    ) -> CreditRiskResponse:
         warnings: list[str] = []
         cards = await self._cards()
         card_rows: list[CardUtilization] = []
@@ -1339,17 +1636,25 @@ class QuantEngine:
         for loan in loans:
             n = loan.remaining_installments
             if not n:
-                warnings.append(f"Empréstimo {loan.id[:8]}: parcelas restantes desconhecidas; parcela não estimada.")
+                warnings.append(
+                    f"Empréstimo {loan.id[:8]}: parcelas restantes desconhecidas; parcela não estimada."
+                )
                 continue
             installments += price_payment(
-                _num(loan.outstanding_balance) or 0.0, (_num(loan.cet_monthly) or 0.0) / 100, int(n)
+                _num(loan.outstanding_balance) or 0.0,
+                (_num(loan.cet_monthly) or 0.0) / 100,
+                int(n),
             )
         if loans:
-            warnings.append("Parcelas estimadas pela tabela Price a partir do saldo devedor e do CET mensal.")
+            warnings.append(
+                "Parcelas estimadas pela tabela Price a partir do saldo devedor e do CET mensal."
+            )
 
         base = complete_months(monthly_table(await self._flows(as_of)), as_of, 6)
         avg_income = float(base["income"].mean()) if len(base) else None
-        commitment = installments / avg_income if avg_income and avg_income > 0 else None
+        commitment = (
+            installments / avg_income if avg_income and avg_income > 0 else None
+        )
 
         flags: list[str] = []
         if utilization is not None and utilization >= 0.30:

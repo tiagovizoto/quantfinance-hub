@@ -108,8 +108,15 @@ def pareto(totals: pd.Series, limit: int = 20) -> ParetoSeries:
         return ParetoSeries(items=[], count=0, n_for_50=0, n_for_80=0)
     cumulative = positive.cumsum() / grand
     items = [
-        ParetoItem(name=str(name), total=_r0(value), share=_r0(value / grand, 4), cumulative=_r0(cum, 4))
-        for (name, value), cum in zip(positive.head(limit).items(), cumulative.head(limit), strict=True)
+        ParetoItem(
+            name=str(name),
+            total=_r0(value),
+            share=_r0(value / grand, 4),
+            cumulative=_r0(cum, 4),
+        )
+        for (name, value), cum in zip(
+            positive.head(limit).items(), cumulative.head(limit), strict=True
+        )
     ]
     n50 = int((cumulative < 0.5).sum()) + 1
     n80 = int((cumulative < 0.8).sum()) + 1
@@ -118,7 +125,9 @@ def pareto(totals: pd.Series, limit: int = 20) -> ParetoSeries:
 
 class InsightsEngine(QuantEngine):
     # -- carga ----------------------------------------------------------------
-    async def _keyed(self, since: datetime, until: datetime | None = None) -> pd.DataFrame:
+    async def _keyed(
+        self, since: datetime, until: datetime | None = None
+    ) -> pd.DataFrame:
         """Fluxos classificados, com a chave do comerciante (``key``) e a conta (``account_name``)."""
         flows = await self._load_flows(since, until)
         if flows.empty:
@@ -154,27 +163,55 @@ class InsightsEngine(QuantEngine):
         loan_installments: list[float] = []
         for loan in await self._loans():
             n = loan.remaining_installments
-            if n is None and loan.total_installments is not None and loan.paid_installments is not None:
+            if (
+                n is None
+                and loan.total_installments is not None
+                and loan.paid_installments is not None
+            ):
                 n = loan.total_installments - loan.paid_installments
             balance = _num(loan.outstanding_balance) or 0.0
             if not n or n <= 0 or balance <= 0:
                 continue
             label = loan.product_name or loan.contract_number or loan.id[:8]
-            amortization = "SAC" if "SAC" in (loan.amortization_scheduled or "").upper() else "PRICE"
-            spec = DebtSpec(loan.id, label, balance, (_num(loan.cet_monthly) or 0.0) / 100, int(n), amortization)
+            amortization = (
+                "SAC"
+                if "SAC" in (loan.amortization_scheduled or "").upper()
+                else "PRICE"
+            )
+            spec = DebtSpec(
+                loan.id,
+                label,
+                balance,
+                (_num(loan.cet_monthly) or 0.0) / 100,
+                int(n),
+                amortization,
+            )
             schedule = [row[0] for row in simulate_payoff([spec], mode="baseline").paid]
             loan_installments.append(spec.first_installment)
-            due_day = loan.first_installment_due_date.day if loan.first_installment_due_date else None
+            due_day = (
+                loan.first_installment_due_date.day
+                if loan.first_installment_due_date
+                else None
+            )
             if due_day is None:
                 due_day = 10
-                warnings.append(f"{label}: dia de vencimento desconhecido; assumido dia 10.")
+                warnings.append(
+                    f"{label}: dia de vencimento desconhecido; assumido dia 10."
+                )
             upcoming, year, month = 0, as_of.year, as_of.month
             while upcoming < len(schedule):
                 due = _clamp_day(year, month, due_day)
                 if due > horizon_end:
                     break
                 if due > as_of:
-                    events.append(CashEvent(date=due, label=f"Parcela {label}", amount=-_r0(schedule[upcoming]), kind="loan"))
+                    events.append(
+                        CashEvent(
+                            date=due,
+                            label=f"Parcela {label}",
+                            amount=-_r0(schedule[upcoming]),
+                            kind="loan",
+                        )
+                    )
                     upcoming += 1
                 year, month = _shift_month(year, month, 1)
 
@@ -186,36 +223,75 @@ class InsightsEngine(QuantEngine):
             due = card.credit_balance_due_date
             if due is None or due <= as_of:
                 day = due.day if due else 10
-                year, month = (as_of.year, as_of.month) if _clamp_day(as_of.year, as_of.month, day) > as_of else _shift_month(as_of.year, as_of.month, 1)
+                year, month = (
+                    (as_of.year, as_of.month)
+                    if _clamp_day(as_of.year, as_of.month, day) > as_of
+                    else _shift_month(as_of.year, as_of.month, 1)
+                )
                 due = _clamp_day(year, month, day)
                 if card.credit_balance_due_date is None:
-                    warnings.append(f"{card.name}: vencimento da fatura desconhecido; assumido dia {day}.")
+                    warnings.append(
+                        f"{card.name}: vencimento da fatura desconhecido; assumido dia {day}."
+                    )
             if due <= horizon_end:
-                events.append(CashEvent(date=due, label=f"Fatura {card.name}", amount=-_r0(used), kind="card"))
+                events.append(
+                    CashEvent(
+                        date=due,
+                        label=f"Fatura {card.name}",
+                        amount=-_r0(used),
+                        kind="card",
+                    )
+                )
 
         # fixos e salário (só os que ainda aparecem)
         def active(group: dict[str, Any]) -> bool:
             return (as_of - group["last_seen"]).days <= RECURRING_ACTIVE_DAYS
 
-        expense_groups = [g for g in recurring_groups(flows[flows["expense"] > 0], "expense") if active(g)]
-        income_groups = [g for g in recurring_groups(flows[flows["income"] > 0], "income") if active(g)]
+        expense_groups = [
+            g
+            for g in recurring_groups(flows[flows["expense"] > 0], "expense")
+            if active(g)
+        ]
+        income_groups = [
+            g
+            for g in recurring_groups(flows[flows["income"] > 0], "income")
+            if active(g)
+        ]
         # parcela de empréstimo que já aparece como débito recorrente não pode entrar duas vezes
         expense_groups = [
-            g for g in expense_groups if not any(abs(g["median"] - inst) <= 0.08 * inst for inst in loan_installments)
+            g
+            for g in expense_groups
+            if not any(
+                abs(g["median"] - inst) <= 0.08 * inst for inst in loan_installments
+            )
         ]
-        for groups, sign, kind in ((expense_groups, -1.0, "recurring"), (income_groups, 1.0, "income")):
+        for groups, sign, kind in (
+            (expense_groups, -1.0, "recurring"),
+            (income_groups, 1.0, "income"),
+        ):
             for g in groups:
                 year, month = as_of.year, as_of.month
                 for _ in range(days // 28 + 3):
                     due = _clamp_day(year, month, g["day"])
                     if as_of < due <= horizon_end:
-                        events.append(CashEvent(date=due, label=str(g["key"]).title(), amount=sign * _r0(g["median"]), kind=kind))  # type: ignore[arg-type]
+                        events.append(
+                            CashEvent(
+                                date=due,
+                                label=str(g["key"]).title(),
+                                amount=sign * _r0(g["median"]),
+                                kind=kind,
+                            )
+                        )  # type: ignore[arg-type]
                     year, month = _shift_month(year, month, 1)
 
         # gasto variável diário (fora os fixos)
-        fixed_keys = {g["key"] for g in recurring_groups(flows[flows["expense"] > 0], "expense")}
+        fixed_keys = {
+            g["key"] for g in recurring_groups(flows[flows["expense"] > 0], "expense")
+        }
         window_start = as_of - timedelta(days=VARIABLE_WINDOW_DAYS)
-        recent = flows[(flows["date"] >= _dt(window_start)) & ~flows["key"].isin(fixed_keys)]
+        recent = flows[
+            (flows["date"] >= _dt(window_start)) & ~flows["key"].isin(fixed_keys)
+        ]
         daily = (
             recent.groupby(recent["date"].dt.normalize())["expense"].sum()
             if not recent.empty
@@ -229,7 +305,9 @@ class InsightsEngine(QuantEngine):
             mu, sigma = float(daily.mean()), float(daily.std(ddof=1))
         else:
             mu, sigma = 0.0, 0.0
-            warnings.append("Poucos dados recentes de gasto variável; a projeção considera apenas contas e parcelas.")
+            warnings.append(
+                "Poucos dados recentes de gasto variável; a projeção considera apenas contas e parcelas."
+            )
 
         by_day: dict[date, float] = {}
         for event in events:
@@ -240,7 +318,14 @@ class InsightsEngine(QuantEngine):
             day = as_of + timedelta(days=i)
             balance += by_day.get(day, 0.0) - mu
             band = Z_P10_P90 * sigma * math.sqrt(i)
-            points.append(CashPoint(date=day, base=_r0(balance), low=_r0(balance - band), high=_r0(balance + band)))
+            points.append(
+                CashPoint(
+                    date=day,
+                    base=_r0(balance),
+                    low=_r0(balance - band),
+                    high=_r0(balance + band),
+                )
+            )
 
         lowest = min(points, key=lambda p: p.base)
         negative = lambda series: next((p.date for p in points if series(p) < 0), None)
@@ -260,15 +345,23 @@ class InsightsEngine(QuantEngine):
         """Gasto acumulado do mês corrente contra o mês passado e a média dos meses fechados."""
         warnings: list[str] = []
         first_year, first_month = _shift_month(as_of.year, as_of.month, -6)
-        flows = await self._load_flows(_dt(_month_start(first_year, first_month)), _dt(as_of + timedelta(days=1)))
+        flows = await self._load_flows(
+            _dt(_month_start(first_year, first_month)), _dt(as_of + timedelta(days=1))
+        )
         daily = (
-            flows.groupby(flows["date"].dt.normalize())["expense"].sum() if not flows.empty else pd.Series(dtype=float)
+            flows.groupby(flows["date"].dt.normalize())["expense"].sum()
+            if not flows.empty
+            else pd.Series(dtype=float)
         )
 
         def cumulative(year: int, month: int) -> np.ndarray:
             length = monthrange(year, month)[1]
             values = np.array(
-                [float(daily.get(pd.Timestamp(year, month, d), 0.0)) for d in range(1, length + 1)], dtype=float
+                [
+                    float(daily.get(pd.Timestamp(year, month, d), 0.0))
+                    for d in range(1, length + 1)
+                ],
+                dtype=float,
             )
             running = np.cumsum(values)
             return np.concatenate([running, np.full(31 - length, running[-1])])
@@ -281,7 +374,9 @@ class InsightsEngine(QuantEngine):
                 closed.append((year, month, curve))
         today = as_of.day
         current_curve = cumulative(as_of.year, as_of.month)
-        current: list[float | None] = [_r0(v) if d + 1 <= today else None for d, v in enumerate(current_curve)]
+        current: list[float | None] = [
+            _r0(v) if d + 1 <= today else None for d, v in enumerate(current_curve)
+        ]
         spent = _r0(current_curve[today - 1])
 
         if not closed:
@@ -295,7 +390,11 @@ class InsightsEngine(QuantEngine):
         previous_year, previous_month, previous_curve = closed[0]
         average_curve = np.mean([c for _, _, c in closed], axis=0)
         average_to_date = float(average_curve[today - 1])
-        projected = spent * float(average_curve[-1]) / average_to_date if average_to_date > 0 else None
+        projected = (
+            spent * float(average_curve[-1]) / average_to_date
+            if average_to_date > 0
+            else None
+        )
         return PaceResponse(
             as_of=as_of, month_label=f"{as_of.year}-{as_of.month:02d}", day_of_month=today, days=list(range(1, 32)),
             current=current, previous=[_r0(v) for v in previous_curve], average=[_r0(v) for v in average_curve],
@@ -311,13 +410,18 @@ class InsightsEngine(QuantEngine):
     ) -> CategoryChangeResponse:
         """Quanto cada categoria subiu ou caiu contra o mês anterior, o mesmo mês do ano passado ou a média de 6 meses."""
         warnings: list[str] = []
-        flows = await self._load_flows(_dt(date(year - 1, month, 1)), _dt(_month_end(year, month) + timedelta(days=1)))
+        flows = await self._load_flows(
+            _dt(date(year - 1, month, 1)),
+            _dt(_month_end(year, month) + timedelta(days=1)),
+        )
         flows = flows[flows["expense"] != 0] if not flows.empty else flows
 
         def totals(y: int, m: int) -> pd.Series:
             if flows.empty:
                 return pd.Series(dtype=float)
-            in_month = flows[(flows["date"].dt.year == y) & (flows["date"].dt.month == m)]
+            in_month = flows[
+                (flows["date"].dt.year == y) & (flows["date"].dt.month == m)
+            ]
             return in_month.groupby("category")["expense"].sum()
 
         current = totals(year, month)
@@ -327,10 +431,16 @@ class InsightsEngine(QuantEngine):
         elif mode == "average_6m":
             frames = [totals(*_shift_month(year, month, -k)) for k in range(1, 7)]
             frames = [f for f in frames if not f.empty]
-            base = pd.concat(frames, axis=1).fillna(0.0).mean(axis=1) if frames else pd.Series(dtype=float)
+            base = (
+                pd.concat(frames, axis=1).fillna(0.0).mean(axis=1)
+                if frames
+                else pd.Series(dtype=float)
+            )
             base_label = f"média dos {len(frames)} meses anteriores"
             if len(frames) < 6:
-                warnings.append(f"Só há {len(frames)} meses anteriores com gastos para compor a média.")
+                warnings.append(
+                    f"Só há {len(frames)} meses anteriores com gastos para compor a média."
+                )
         else:
             base = totals(*_shift_month(year, month, -1))
             base_label = _label(*_shift_month(year, month, -1))
@@ -371,9 +481,17 @@ class InsightsEngine(QuantEngine):
             in_month = spend["date"].dt.month == m
             fixed = float(spend.loc[in_month & fixed_mask, "expense"].sum())
             one_off = float(spend.loc[in_month & one_off_mask, "expense"].sum())
-            variable = float(spend.loc[in_month & ~fixed_mask & ~one_off_mask, "expense"].sum())
+            variable = float(
+                spend.loc[in_month & ~fixed_mask & ~one_off_mask, "expense"].sum()
+            )
             months.append(
-                StructureMonth(month=m, fixed=_r0(fixed), variable=_r0(variable), one_off=_r0(one_off), total=_r0(fixed + variable + one_off))
+                StructureMonth(
+                    month=m,
+                    fixed=_r0(fixed),
+                    variable=_r0(variable),
+                    one_off=_r0(one_off),
+                    total=_r0(fixed + variable + one_off),
+                )
             )
         fixed_total = sum(x.fixed for x in months)
         variable_total = sum(x.variable for x in months)
@@ -381,7 +499,9 @@ class InsightsEngine(QuantEngine):
         grand = fixed_total + variable_total + one_off_total
         warnings = [] if grand > 0 else [f"Nenhum gasto em {year}."]
         if fixed_groups:
-            warnings.append("Fixo = gasto que se repete todo mês com valor parecido; avulso = lançamento grande fora do padrão.")
+            warnings.append(
+                "Fixo = gasto que se repete todo mês com valor parecido; avulso = lançamento grande fora do padrão."
+            )
         return StructureResponse(
             year=year, months=months, fixed_total=_r0(fixed_total), variable_total=_r0(variable_total),
             one_off_total=_r0(one_off_total), fixed_share=_r(fixed_total / grand, 4) if grand > 0 else None,
@@ -390,14 +510,22 @@ class InsightsEngine(QuantEngine):
         )  # fmt: skip
 
     # -- 5. concentração ----------------------------------------------------------------
-    async def concentration(self, year: int, month: int | None) -> ConcentrationResponse:
+    async def concentration(
+        self, year: int, month: int | None
+    ) -> ConcentrationResponse:
         start = _month_start(year, month or 1)
         end = _month_end(year, month) if month else _month_end(year, 12)
         flows = await self._keyed(_dt(start), _dt(end + timedelta(days=1)))
         spend = flows[flows["expense"] > 0]
-        categories = pareto(spend.groupby("category")["expense"].sum()) if not spend.empty else pareto(pd.Series(dtype=float))
+        categories = (
+            pareto(spend.groupby("category")["expense"].sum())
+            if not spend.empty
+            else pareto(pd.Series(dtype=float))
+        )
         merchants = (
-            pareto(spend.groupby("key")["expense"].sum().rename(lambda k: str(k).title()))
+            pareto(
+                spend.groupby("key")["expense"].sum().rename(lambda k: str(k).title())
+            )
             if not spend.empty
             else pareto(pd.Series(dtype=float))
         )
@@ -407,12 +535,18 @@ class InsightsEngine(QuantEngine):
         )  # fmt: skip
 
     # -- 6. carteira ----------------------------------------------------------------------
-    async def portfolio(self, as_of: date, assumptions: MarketAssumptions) -> PortfolioResponse:
+    async def portfolio(
+        self, as_of: date, assumptions: MarketAssumptions
+    ) -> PortfolioResponse:
         warnings: list[str] = []
         positions = await self._positions()
         details = {
             inv.id: inv
-            for inv in (await self._session.scalars(select(Investment).where(Investment.is_active.is_(True)))).all()
+            for inv in (
+                await self._session.scalars(
+                    select(Investment).where(Investment.is_active.is_(True))
+                )
+            ).all()
         }
         total = sum(max(p.net, 0.0) for p in positions)
         cdi_pct = assumptions.cdi_annual * 100
@@ -443,15 +577,23 @@ class InsightsEngine(QuantEngine):
                 )
             )  # fmt: skip
             if pos.asset_class == "RENDA_FIXA" and due and due >= as_of:
-                buckets.setdefault(f"{due.year}-{due.month:02d}", []).append((name, value))
+                buckets.setdefault(f"{due.year}-{due.month:02d}", []).append(
+                    (name, value)
+                )
 
         if any(p.rate_source == "estimada" for p in out):
-            warnings.append("Posições sem taxa legível foram estimadas a 100% do CDI/retorno padrão da classe.")
+            warnings.append(
+                "Posições sem taxa legível foram estimadas a 100% do CDI/retorno padrão da classe."
+            )
         if not positions:
             warnings.append("Nenhum investimento ativo.")
         out.sort(key=lambda p: -p.value)
         maturities = [
-            MaturityBucket(month=m, value=_r0(sum(v for _, v in items)), items=[n for n, _ in items])
+            MaturityBucket(
+                month=m,
+                value=_r0(sum(v for _, v in items)),
+                items=[n for n, _ in items],
+            )
             for m, items in sorted(buckets.items())
         ]
         limit_year, limit_month = _shift_month(as_of.year, as_of.month, 12)
@@ -473,27 +615,43 @@ class InsightsEngine(QuantEngine):
         rows = (
             await self._session.execute(
                 select(
-                    Transaction.date, Transaction.description, Transaction.amount, Transaction.account_id,
-                    Transaction.installment_number, Transaction.total_installments, Account.name,
+                    Transaction.date,
+                    Transaction.description,
+                    Transaction.amount,
+                    Transaction.account_id,
+                    Transaction.installment_number,
+                    Transaction.total_installments,
+                    Account.name,
                 )
                 .join(Account, Account.id == Transaction.account_id)
                 .where(
-                    Transaction.total_installments > 1, Transaction.installment_number.is_not(None),
+                    Transaction.total_installments > 1,
+                    Transaction.installment_number.is_not(None),
                     Transaction.date >= since,
                 )
             )
         ).all()
         latest: dict[tuple[str, str, int, int], Any] = {}
         for row in rows:
-            key = (row.account_id, merchant_key(row.description), int(row.total_installments), round(abs(float(row.amount))))
-            if key not in latest or (row.installment_number, row.date) > (latest[key].installment_number, latest[key].date):
+            key = (
+                row.account_id,
+                merchant_key(row.description),
+                int(row.total_installments),
+                round(abs(float(row.amount))),
+            )
+            if key not in latest or (row.installment_number, row.date) > (
+                latest[key].installment_number,
+                latest[key].date,
+            ):
                 latest[key] = row
 
         purchases: list[InstallmentPurchase] = []
         by_month: dict[str, list[float]] = {}
         for row in latest.values():
             remaining = int(row.total_installments) - int(row.installment_number)
-            elapsed = max((as_of.year - row.date.year) * 12 + (as_of.month - row.date.month), 0)
+            elapsed = max(
+                (as_of.year - row.date.year) * 12 + (as_of.month - row.date.month), 0
+            )
             future = remaining - elapsed
             if future <= 0:
                 continue
@@ -502,17 +660,27 @@ class InsightsEngine(QuantEngine):
                 by_month.setdefault(add_months_label(as_of, j), []).append(amount)
             purchases.append(
                 InstallmentPurchase(
-                    description=str(row.description or "(sem descrição)"), account=str(row.name), amount=_r0(amount),
-                    number=int(row.installment_number), total=int(row.total_installments), remaining=future,
-                    remaining_total=_r0(amount * future), ends_on=add_months_label(as_of, future),
+                    description=str(row.description or "(sem descrição)"),
+                    account=str(row.name),
+                    amount=_r0(amount),
+                    number=int(row.installment_number),
+                    total=int(row.total_installments),
+                    remaining=future,
+                    remaining_total=_r0(amount * future),
+                    ends_on=add_months_label(as_of, future),
                 )
             )
         purchases.sort(key=lambda p: -p.remaining_total)
-        months = [InstallmentMonth(month=m, total=_r0(sum(v)), count=len(v)) for m, v in sorted(by_month.items())]
+        months = [
+            InstallmentMonth(month=m, total=_r0(sum(v)), count=len(v))
+            for m, v in sorted(by_month.items())
+        ]
         warnings = (
             []
             if purchases
-            else ["Nenhuma compra parcelada com parcelas futuras. Se você parcela no cartão, confira se a sua fonte informa a parcela atual e o total."]
+            else [
+                "Nenhuma compra parcelada com parcelas futuras. Se você parcela no cartão, confira se a sua fonte informa a parcela atual e o total."
+            ]
         )
         return InstallmentsResponse(
             as_of=as_of, months=months, purchases=purchases, total_committed=_r0(sum(p.remaining_total for p in purchases)),
@@ -528,7 +696,15 @@ class InsightsEngine(QuantEngine):
         income = flows[flows["income"] > 0]
         spend = flows[flows["expense"] > 0]
         if spend.empty and income.empty:
-            return MoneyGraphResponse(year=year, month=month, nodes=[], links=[], expense_total=0.0, income_total=0.0, warnings=["Nenhuma transação neste período."])
+            return MoneyGraphResponse(
+                year=year,
+                month=month,
+                nodes=[],
+                links=[],
+                expense_total=0.0,
+                income_total=0.0,
+                warnings=["Nenhuma transação neste período."],
+            )
 
         nodes: dict[str, GraphNode] = {}
         link_values: dict[tuple[str, str], float] = {}
@@ -537,10 +713,14 @@ class InsightsEngine(QuantEngine):
             if node_id in nodes:
                 nodes[node_id].value += value
             else:
-                nodes[node_id] = GraphNode(id=node_id, label=label, kind=kind, value=value)  # type: ignore[arg-type]
+                nodes[node_id] = GraphNode(
+                    id=node_id, label=label, kind=kind, value=value
+                )  # type: ignore[arg-type]
 
         def add_link(source: str, target: str, value: float) -> None:
-            link_values[(source, target)] = link_values.get((source, target), 0.0) + value
+            link_values[(source, target)] = (
+                link_values.get((source, target), 0.0) + value
+            )
 
         top_income = income.groupby("key")["income"].sum().nlargest(4).index
         for row in income.itertuples():
@@ -551,9 +731,17 @@ class InsightsEngine(QuantEngine):
             add_node(account_id, str(row.account_name), "account", 0.0)
             add_link(income_id, account_id, float(row.income))
 
-        top_categories = list(spend.groupby("category")["expense"].sum().nlargest(10).index)
-        spend = spend.assign(group=spend["category"].where(spend["category"].isin(top_categories), "Outras categorias"))
-        for (account_name, group), value in spend.groupby(["account_name", "group"])["expense"].sum().items():
+        top_categories = list(
+            spend.groupby("category")["expense"].sum().nlargest(10).index
+        )
+        spend = spend.assign(
+            group=spend["category"].where(
+                spend["category"].isin(top_categories), "Outras categorias"
+            )
+        )
+        for (account_name, group), value in (
+            spend.groupby(["account_name", "group"])["expense"].sum().items()
+        ):
             account_id, category_id = f"acc:{account_name}", f"cat:{group}"
             add_node(account_id, str(account_name), "account", float(value))
             add_node(category_id, str(group), "category", float(value))
@@ -562,7 +750,12 @@ class InsightsEngine(QuantEngine):
         for group in list(spend.groupby("group")["expense"].sum().nlargest(8).index):
             if group == "Outras categorias":
                 continue
-            merchants = spend[spend["group"] == group].groupby("key")["expense"].sum().nlargest(3)
+            merchants = (
+                spend[spend["group"] == group]
+                .groupby("key")["expense"]
+                .sum()
+                .nlargest(3)
+            )
             for key, value in merchants.items():
                 merchant_id = f"mer:{group}|{key}"
                 add_node(merchant_id, str(key).title(), "merchant", float(value))
@@ -609,40 +802,68 @@ class InsightsEngine(QuantEngine):
 
     async def net_worth(self, as_of: date) -> NetWorthResponse:
         parts = await self._net_worth_components()
-        rows = (await self._session.scalars(select(NetWorthSnapshot).order_by(NetWorthSnapshot.day))).all()
+        rows = (
+            await self._session.scalars(
+                select(NetWorthSnapshot).order_by(NetWorthSnapshot.day)
+            )
+        ).all()
         history = [
             NetWorthPoint(
-                day=r.day, net_worth=_r0(r.net_worth), liquidity=_r0(r.liquidity), investments=_r0(r.investments),
-                loans=_r0(r.loans), card_debt=_r0(r.card_debt),
+                day=r.day,
+                net_worth=_r0(r.net_worth),
+                liquidity=_r0(r.liquidity),
+                investments=_r0(r.investments),
+                loans=_r0(r.loans),
+                card_debt=_r0(r.card_debt),
             )
             for r in rows
         ]
         warnings = []
         if len(history) < 2:
-            warnings.append("O histórico começa a ser gravado a cada sincronização; o gráfico aparece a partir do segundo dia.")
+            warnings.append(
+                "O histórico começa a ser gravado a cada sincronização; o gráfico aparece a partir do segundo dia."
+            )
         return NetWorthResponse(
-            current=NetWorthPoint(day=as_of, **{k: _r0(v) for k, v in parts.items()}), history=history, warnings=warnings
+            current=NetWorthPoint(day=as_of, **{k: _r0(v) for k, v in parts.items()}),
+            history=history,
+            warnings=warnings,
         )
-
 
     # -- 10. auditoria: o que NÃO entrou na conta de receita/despesa -----------------------------
     async def flow_audit(self, year: int) -> FlowAuditResponse:
         """Mostra o que foi desconsiderado (e por quê), para você conferir se algo real ficou de fora."""
-        raw = await self._load_flows(_dt(date(year, 1, 1)), _dt(date(year + 1, 1, 1)), net_day_trade=False)
+        raw = await self._load_flows(
+            _dt(date(year, 1, 1)), _dt(date(year + 1, 1, 1)), net_day_trade=False
+        )
         own = get_settings().own_name_list
         warnings: list[str] = []
         groups: list[AuditGroup] = []
         trade = raw[raw["reason"].eq("day_trade")]
         day_trade_net = 0.0
         if not trade.empty:
-            signed = trade["amount"].where(trade["type"].str.upper().eq("CREDIT"), -trade["amount"])
+            signed = trade["amount"].where(
+                trade["type"].str.upper().eq("CREDIT"), -trade["amount"]
+            )
             day_trade_net = float(signed.sum())
-        for reason in ("pareada", "propria", "investimento", "cartao", "day_trade"):
+        for reason in (
+            "pareada",
+            "propria",
+            "investimento",
+            "emprestimo",
+            "cartao",
+            "day_trade",
+        ):
             rows = raw[raw["reason"].eq(reason)]
             if rows.empty:
                 continue
-            signed = rows["amount"].where(rows["type"].str.upper().eq("CREDIT"), -rows["amount"])
-            top = rows.assign(signed=signed).sort_values("amount", ascending=False).head(5)
+            signed = rows["amount"].where(
+                rows["type"].str.upper().eq("CREDIT"), -rows["amount"]
+            )
+            top = (
+                rows.assign(signed=signed)
+                .sort_values("amount", ascending=False)
+                .head(5)
+            )
             groups.append(
                 AuditGroup(
                     reason=reason, label=REASON_LABELS[reason], count=len(rows),

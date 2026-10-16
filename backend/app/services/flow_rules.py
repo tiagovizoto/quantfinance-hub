@@ -21,18 +21,38 @@ CARD_MARKERS: Final = (
     "pagamento fatura",
     "pagamento recebido",
 )
-OWN_TRANSFER_MARKERS: Final = ("same person transfer", "mesma titularidade", "transf saldo c")
+OWN_TRANSFER_MARKERS: Final = (
+    "same person transfer",
+    "mesma titularidade",
+    "transf saldo c",
+)
 # Aplicação e resgate: o dinheiro só passa para (ou volta de) um investimento, que já está no patrimônio.
 INVESTMENT_MARKERS: Final = ("aplicacao", "resgate", "aplic financ", "resg ")
-DAY_TRADE_MARKERS: Final = ("ajuste day", "day-trade", "day trade", "daytrade", "liquido das operacoes", "liquido de operacoes")
+DAY_TRADE_MARKERS: Final = (
+    "ajuste day",
+    "day-trade",
+    "day trade",
+    "daytrade",
+    "liquido das operacoes",
+    "liquido de operacoes",
+)
+# Dinheiro de empréstimo liberado na conta: aumenta a dívida, não é receita.
+LOAN_PROCEEDS_MARKERS: Final = (
+    "lib consig",
+    "lib emp",
+    "liberacao de credito",
+    "credito consignado",
+    "emprestimo liberado",
+)
 _TRANSFER_WORDS: Final = re.compile(r"\b(transf\w*|ted|doc|pix|tef|saldo)\b")
-PAIR_WINDOW_DAYS: Final = 3
+PAIR_WINDOW_DAYS: Final = 2
 
 REASON_LABELS: Final = {
     "cartao": "Pagamento de fatura do cartão",
     "propria": "Transferência entre suas contas",
     "pareada": "Transferência entre suas contas (valores que saem de uma e entram na outra)",
     "investimento": "Aplicação e resgate de investimentos",
+    "emprestimo": "Dinheiro de empréstimo liberado na conta (é dívida, não receita)",
     "day_trade": "Caixa da corretora (day trade): entra só o resultado líquido do mês",
 }
 
@@ -41,12 +61,33 @@ def _contains(text: pd.Series, markers: Sequence[str]) -> pd.Series:
     return text.map(lambda t: any(m in t for m in markers))
 
 
-def own_name_mask(description: pd.Series, own_names: Sequence[str], normalize) -> pd.Series:
+def _squash(text: str, normalize) -> str:
+    return " ".join(normalize(text).split())
+
+
+_TRAILING_NAME: Final = re.compile(r"[-|]\s*([A-Za-zÀ-ÿ]+(?:\s+[A-Za-zÀ-ÿ]+){2,})\s*$")
+
+
+def detect_own_names(frame: pd.DataFrame, normalize) -> list[str]:
+    """Nome do titular, aprendido das linhas que o próprio banco marcou como "Same person transfer"."""
+    marked = frame[frame["category"].fillna("").str.lower().str.contains("same person")]
+    counts: dict[str, int] = {}
+    for desc in marked["description"].fillna(""):
+        match = _TRAILING_NAME.search(desc)
+        if match:
+            name = _squash(match.group(1), normalize)
+            counts[name] = counts.get(name, 0) + 1
+    return [name for name, n in counts.items() if n >= 2]
+
+
+def own_name_mask(
+    description: pd.Series, own_names: Sequence[str], normalize
+) -> pd.Series:
     """Linhas cuja descrição cita o nome do titular (PIX/TED para si mesmo)."""
-    names = [normalize(n).strip() for n in own_names if n and n.strip()]
+    names = [_squash(n, normalize) for n in own_names if n and n.strip()]
     if not names:
         return pd.Series(False, index=description.index)
-    text = description.fillna("").map(normalize)
+    text = description.fillna("").map(lambda t: _squash(t, normalize))
     return text.map(lambda t: any(n in t for n in names))
 
 
@@ -77,7 +118,11 @@ def pair_transfers(
         incoming.setdefault(int(cents[i]), []).append(int(i))
     for i in sorted(np.flatnonzero(candidates & ~credit), key=lambda k: dates[k]):
         for j in incoming.get(int(cents[i]), []):
-            if not result[j] and accounts[j] != accounts[i] and abs(dates[j] - dates[i]) <= window:
+            if (
+                not result[j]
+                and accounts[j] != accounts[i]
+                and abs(dates[j] - dates[i]) <= window
+            ):
                 result[i] = result[j] = True
                 break
     return pd.Series(result, index=frame.index)
@@ -91,11 +136,17 @@ def net_day_trade(frame: pd.DataFrame, mask: pd.Series) -> pd.DataFrame:
     kept = frame[~mask].copy()
     synthetic = []
     for _, month in rows.groupby(rows["date"].dt.to_period("M")):
-        signed = np.where(month["type"].str.upper().eq("CREDIT"), month["amount"], -month["amount"])
+        signed = np.where(
+            month["type"].str.upper().eq("CREDIT"), month["amount"], -month["amount"]
+        )
         net = float(signed.sum())
         if abs(net) < 0.005:
             continue
-        account = month["account_name"].mode().iat[0] if "account_name" in month.columns else ""
+        account = (
+            month["account_name"].mode().iat[0]
+            if "account_name" in month.columns
+            else ""
+        )
         base = {c: None for c in frame.columns}
         base.update(
             date=month["date"].max().normalize() + timedelta(hours=12),
@@ -111,4 +162,10 @@ def net_day_trade(frame: pd.DataFrame, mask: pd.Series) -> pd.DataFrame:
             reason="",
         )
         synthetic.append(base)
-    return pd.concat([kept, pd.DataFrame(synthetic, columns=frame.columns)], ignore_index=True) if synthetic else kept
+    return (
+        pd.concat(
+            [kept, pd.DataFrame(synthetic, columns=frame.columns)], ignore_index=True
+        )
+        if synthetic
+        else kept
+    )
