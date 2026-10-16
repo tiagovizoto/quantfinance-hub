@@ -16,14 +16,18 @@ import numpy as np
 import pandas as pd
 from sqlalchemy import select
 
+from app.core.config import get_settings
 from app.models import Account, Investment, NetWorthSnapshot, Transaction
 from app.schemas.insights import (
+    AuditExample,
+    AuditGroup,
     CashEvent,
     CashForecastResponse,
     CashPoint,
     CategoryChange,
     CategoryChangeResponse,
     ConcentrationResponse,
+    FlowAuditResponse,
     GraphLink,
     GraphNode,
     InstallmentMonth,
@@ -43,6 +47,7 @@ from app.schemas.insights import (
     StructureResponse,
 )
 from app.schemas.quant import MarketAssumptions
+from app.services.flow_rules import REASON_LABELS
 from app.services.quant_engine import (
     MONTH_NAMES_PT,
     DebtSpec,
@@ -618,3 +623,43 @@ class InsightsEngine(QuantEngine):
         return NetWorthResponse(
             current=NetWorthPoint(day=as_of, **{k: _r0(v) for k, v in parts.items()}), history=history, warnings=warnings
         )
+
+
+    # -- 10. auditoria: o que NÃO entrou na conta de receita/despesa -----------------------------
+    async def flow_audit(self, year: int) -> FlowAuditResponse:
+        """Mostra o que foi desconsiderado (e por quê), para você conferir se algo real ficou de fora."""
+        raw = await self._load_flows(_dt(date(year, 1, 1)), _dt(date(year + 1, 1, 1)), net_day_trade=False)
+        own = get_settings().own_name_list
+        warnings: list[str] = []
+        groups: list[AuditGroup] = []
+        trade = raw[raw["reason"].eq("day_trade")]
+        day_trade_net = 0.0
+        if not trade.empty:
+            signed = trade["amount"].where(trade["type"].str.upper().eq("CREDIT"), -trade["amount"])
+            day_trade_net = float(signed.sum())
+        for reason in ("pareada", "propria", "investimento", "cartao", "day_trade"):
+            rows = raw[raw["reason"].eq(reason)]
+            if rows.empty:
+                continue
+            signed = rows["amount"].where(rows["type"].str.upper().eq("CREDIT"), -rows["amount"])
+            top = rows.assign(signed=signed).sort_values("amount", ascending=False).head(5)
+            groups.append(
+                AuditGroup(
+                    reason=reason, label=REASON_LABELS[reason], count=len(rows),
+                    money_in=_r0(signed[signed > 0].sum()), money_out=_r0(-signed[signed < 0].sum()),
+                    examples=[
+                        AuditExample(date=r.date.date(), description=str(r.description or ""), account=str(r.account_name or ""), amount=_r0(r.signed))
+                        for r in top.itertuples()
+                    ],
+                )
+            )  # fmt: skip
+        if not own:
+            warnings.append(
+                "Defina OWN_NAMES no .env com o seu nome como aparece nos extratos (ex.: OWN_NAMES=Tiago Carneiro Vizoto) "
+                "para ignorar PIX e TED que você manda para si mesmo."
+            )
+        return FlowAuditResponse(
+            year=year, counted_income=_r0(raw["income"].sum() + max(day_trade_net, 0.0)),
+            counted_expense=_r0(raw["expense"].sum() + max(-day_trade_net, 0.0)),
+            groups=groups, day_trade_net=_r0(day_trade_net), own_names=own, warnings=warnings,
+        )  # fmt: skip

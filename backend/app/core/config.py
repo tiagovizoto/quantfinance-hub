@@ -38,6 +38,13 @@ class Settings(BaseSettings):
     def pluggy_item_ids(self) -> list[str]:
         return split_item_ids(self.pluggy_item_id)
 
+    # Seu(s) nome(s) como aparece(m) nos extratos (PIX/TED para si mesmo), separados por vírgula.
+    own_names: str = ""
+
+    @property
+    def own_name_list(self) -> list[str]:
+        return [n.strip() for n in self.own_names.split(",") if n.strip()]
+
     pluggy_timeout_seconds: float = 30.0
     pluggy_max_retries: int = 4
     # Janela de reprocessamento em syncs incrementais (transações PENDING viram POSTED depois).

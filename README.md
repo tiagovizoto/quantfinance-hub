@@ -103,6 +103,9 @@ PLUGGY_ITEM_ID=id-nubank,id-itau,id-inter
 
 `POST /api/v1/sync` e o botão "Sincronizar agora" sincronizam todos em sequência. Se um banco falhar (conexão expirada, por exemplo), os outros continuam e a resposta lista os que falharam em `failed`. Para sincronizar um só: `POST /api/v1/sync/{itemId}`. Os `itemId` aparecem no painel da Pluggy (Items) e no retorno do evento `onSuccess` do Connect.
 
+### O que conta como receita e gasto
+Para não inflar os números ao ligar vários bancos, ficam **de fora** de receita/gasto: pagamento de fatura do cartão, transferências entre as suas contas (saída e entrada de mesmo valor em contas diferentes, até 3 dias de diferença), PIX/TED para o seu próprio nome (defina `OWN_NAMES` no `.env`), e aplicações/resgates de investimentos. O **day trade** (ajustes e líquido das operações da corretora) entra só pelo resultado líquido de cada mês. A seção "O que não entrou na conta" (Explorar) e `GET /api/v1/quant/flow-audit` mostram o que foi deixado de fora e por quê.
+
 ## Endpoints quantitativos (`/api/v1/quant`)
 
 | Rota | O que devolve |
@@ -117,6 +120,7 @@ PLUGGY_ITEM_ID=id-nubank,id-itau,id-inter
 | `GET /portfolio` | composição, vencimentos, retorno x CDI por posição |
 | `GET /installments` | parcelas futuras de compras já feitas no cartão |
 | `GET /money-graph?year=&month=` | nós e ligações receita → conta → categoria → estabelecimento (grafo) |
+| `GET /flow-audit?year=` | o que foi desconsiderado como receita/gasto (transferências próprias, aplicações, day trade bruto) |
 | `GET /net-worth` | patrimônio atual e histórico diário |
 
 O histórico de patrimônio é gravado (tabela `net_worth_snapshots`, migração `0002`) a cada sincronização; ele só existe a partir do primeiro sync depois de `alembic upgrade head`. Não há orçamento por categoria. A projeção de caixa e a detecção de gastos fixos são estimativas por padrão histórico.

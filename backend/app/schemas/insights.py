@@ -229,3 +229,30 @@ class NetWorthResponse(BaseModel):
     current: NetWorthPoint
     history: list[NetWorthPoint]
     warnings: list[str]
+
+
+# --------------------------------------------------------------------- auditoria do que foi desconsiderado
+class AuditExample(BaseModel):
+    date: date
+    description: str
+    account: str
+    amount: float  # positivo = entrou, negativo = saiu
+
+
+class AuditGroup(BaseModel):
+    reason: str
+    label: str
+    count: int
+    money_in: float
+    money_out: float
+    examples: list[AuditExample]
+
+
+class FlowAuditResponse(BaseModel):
+    year: int
+    counted_income: float
+    counted_expense: float
+    groups: list[AuditGroup]
+    day_trade_net: float  # resultado líquido do ano (já incluído em receita ou despesa)
+    own_names: list[str]
+    warnings: list[str]

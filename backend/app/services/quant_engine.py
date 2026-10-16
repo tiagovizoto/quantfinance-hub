@@ -28,6 +28,7 @@ from scipy import stats
 from sqlalchemy import extract, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.models import Account, Investment, Loan, Transaction
 from app.schemas.quant import (
     AnomaliesResponse,
@@ -62,6 +63,7 @@ from app.schemas.quant import (
     YearMonth,
     YearSummaryResponse,
 )
+from app.services import flow_rules
 
 MONTH_NAMES_PT: Final = (
     "janeiro", "fevereiro", "março", "abril", "maio", "junho",
@@ -73,16 +75,6 @@ IR_EXEMPT_SUBTYPES: Final = frozenset({"LCI", "LCA", "LCD", "CRI", "CRA", "POUPA
 FLAT_TAX_RATE: Final = 0.15  # aproximação de longo prazo p/ renda variável, fundos e RF tributada (MC)
 HISTORY_MONTHS_LOADED: Final = 14
 
-# Trechos (sem acento, minúsculos) que marcam movimentos que NÃO são receita/despesa real.
-INTERNAL_MARKERS: Final = (
-    "credit card payment",
-    "pagamento de cartao",
-    "pagamento de fatura",
-    "pagamento fatura",
-    "pagamento recebido",
-    "same person transfer",
-    "mesma titularidade",
-)
 REFUND_MARKERS: Final = ("estorno", "reembolso", "refund", "cancelamento", "chargeback")
 
 
@@ -118,27 +110,45 @@ def _r0(value: Any, digits: int = 2) -> float:
     return _r(value, digits) or 0.0
 
 
-def classify_flows(df: pd.DataFrame) -> pd.DataFrame:
-    """Acrescenta colunas ``income`` e ``expense`` (>= 0, exceto estornos que reduzem despesa).
+def classify_flows(df: pd.DataFrame, own_names: Sequence[str] = (), *, net_day_trade: bool = True) -> pd.DataFrame:
+    """Acrescenta ``income``, ``expense`` (>= 0, exceto estornos que reduzem despesa) e ``reason``.
 
-    Entrada: date, amount, type, category, description, account_type (BANK|CREDIT).
+    Entrada: date, amount, type, category, description, account_type (BANK|CREDIT) e, opcionais,
+    account_name e tx_id. ``reason`` explica por que uma linha NÃO conta como receita/despesa
+    (ver ``flow_rules.REASON_LABELS``); vazio = conta normalmente.
     """
     out = df.copy()
     out["date"] = pd.to_datetime(out["date"])
     out["amount"] = out["amount"].astype(float).abs()
     text = (out["category"].fillna("") + " " + out["description"].fillna("")).map(_norm)
 
-    internal = text.map(lambda t: any(m in t for m in INTERNAL_MARKERS))
     refund = text.map(lambda t: any(m in t for m in REFUND_MARKERS))
     is_card = out["account_type"].eq("CREDIT")
     is_credit_dir = out["type"].str.upper().eq("CREDIT")
 
-    out["income"] = np.where(~is_card & is_credit_dir & ~internal, out["amount"], 0.0)
-    out["expense"] = np.where(~internal & ~is_credit_dir, out["amount"], 0.0)
+    reason = pd.Series("", index=out.index)
+    for label, mask in (
+        ("day_trade", flow_rules._contains(text, flow_rules.DAY_TRADE_MARKERS)),
+        ("investimento", flow_rules._contains(text, flow_rules.INVESTMENT_MARKERS)),
+        ("propria", flow_rules._contains(text, flow_rules.OWN_TRANSFER_MARKERS)
+            | flow_rules.own_name_mask(out["description"], own_names, _norm)),
+        ("cartao", flow_rules._contains(text, flow_rules.CARD_MARKERS)),
+    ):
+        reason = reason.mask(mask & reason.eq(""), label)
+    paired = flow_rules.pair_transfers(out, text, reason.ne(""), is_credit_dir)
+    reason = reason.mask(paired & reason.eq(""), "pareada")
+
+    internal = reason.isin(["cartao", "propria", "pareada", "investimento"])
+    day_trade = reason.eq("day_trade")
+    skip = internal | day_trade
+
+    out["income"] = np.where(~is_card & is_credit_dir & ~skip, out["amount"], 0.0)
+    out["expense"] = np.where(~skip & ~is_credit_dir, out["amount"], 0.0)
     # Crédito no cartão só reduz despesa se for estorno; o resto é pagamento de fatura (ignorado).
-    out["expense"] = out["expense"] - np.where(is_card & is_credit_dir & refund & ~internal, out["amount"], 0.0)
+    out["expense"] = out["expense"] - np.where(is_card & is_credit_dir & refund & ~skip, out["amount"], 0.0)
     out["category"] = out["category"].fillna("Sem categoria")
-    return out
+    out["reason"] = reason
+    return flow_rules.net_day_trade(out, day_trade) if net_day_trade else out
 
 
 # ===========================================================================
@@ -529,8 +539,7 @@ def category_zscores(
 # 2b. Explorador de gastos: agrupamento por comerciante e recorrentes
 # ===========================================================================
 _MERCHANT_STOP: Final = frozenset(
-    "compra no debito credito pix enviado recebido transferencia enviada recebida pelo pagamento de em a "
-    "pag pg mp ifd da do dos das para".split()
+    ["compra", "no", "debito", "credito", "pix", "enviado", "recebido", "transferencia", "enviada", "recebida", "pelo", "pagamento", "de", "em", "a", "pag", "pg", "mp", "ifd", "da", "do", "dos", "das", "para"]
 )
 _WEEKDAYS_PT: Final = ("Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom")
 
@@ -609,7 +618,9 @@ class QuantEngine:
         since = (pd.Timestamp(as_of) - pd.DateOffset(months=HISTORY_MONTHS_LOADED)).replace(day=1)
         return await self._load_flows(since.to_pydatetime())
 
-    async def _load_flows(self, since: datetime, until: datetime | None = None) -> pd.DataFrame:
+    async def _load_flows(
+        self, since: datetime, until: datetime | None = None, *, net_day_trade: bool = True
+    ) -> pd.DataFrame:
         """Transações em [since, until) já classificadas em receita/despesa."""
         statement = (
             select(
@@ -637,10 +648,11 @@ class QuantEngine:
                     "category": pd.Series(dtype=str),
                     "income": pd.Series(dtype=float),
                     "expense": pd.Series(dtype=float),
+                    "reason": pd.Series(dtype=str),
                 }
             )
         raw["amount"] = raw["amount"].map(float)
-        return classify_flows(raw)
+        return classify_flows(raw, get_settings().own_name_list, net_day_trade=net_day_trade)
 
     async def _liquidity(self, include_investments: bool) -> float:
         bank = await self._session.scalar(

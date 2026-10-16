@@ -10,6 +10,7 @@ import type {
   CategoryChangeResponse,
   ChangeMode,
   ConcentrationResponse,
+  FlowAuditResponse,
   InstallmentsResponse,
   MoneyGraphResponse,
   NetWorthResponse,
@@ -170,4 +171,12 @@ export function usePortfolio(assumptions: Assumptions) {
 
 export function useNetWorth() {
   return useQuery({ queryKey: ["net-worth"], queryFn: () => request<NetWorthResponse>("/quant/net-worth"), retry: shouldRetry });
+}
+
+export function useFlowAudit(year: number) {
+  return useQuery({
+    queryKey: ["flow-audit", year],
+    queryFn: () => request<FlowAuditResponse>(withQuery("/quant/flow-audit", { year })),
+    ...keep,
+  });
 }

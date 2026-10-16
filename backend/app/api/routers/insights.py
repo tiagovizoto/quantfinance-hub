@@ -10,6 +10,7 @@ from app.schemas.insights import (
     CashForecastResponse,
     CategoryChangeResponse,
     ConcentrationResponse,
+    FlowAuditResponse,
     InstallmentsResponse,
     MoneyGraphResponse,
     NetWorthResponse,
@@ -84,3 +85,9 @@ async def money_graph(engine: Engine, year: Year = None, month: Month = None) ->
 @router.get("/net-worth", response_model=NetWorthResponse)
 async def net_worth(engine: Engine, as_of: AsOf = None) -> NetWorthResponse:
     return await engine.net_worth(as_of or date.today())
+
+
+@router.get("/flow-audit", response_model=FlowAuditResponse)
+async def flow_audit(engine: Engine, year: Year = None) -> FlowAuditResponse:
+    """O que foi desconsiderado como receita/despesa (transferências próprias, aplicações, day trade bruto)."""
+    return await engine.flow_audit(year or date.today().year)

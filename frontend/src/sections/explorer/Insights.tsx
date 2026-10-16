@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
-import { useCategoryChange, useConcentration, useStructure } from "../../api/hooks";
+import { useCategoryChange, useConcentration, useFlowAudit, useStructure } from "../../api/hooks";
 import type { ChangeMode, SpendingResponse } from "../../api/types";
 import { ChartOrTable, Legend, Pills, TooltipBox } from "../../components/chart";
 import type { TipProps } from "../../components/chart";
 import { Async, Notes } from "../../components/ui";
 import { AXIS_TICK, GRID, INTEREST_COLOR, MUTED_BAR, PRINCIPAL_COLOR, SERIES, SERIES_BLUE, SERIES_ORANGE } from "../../lib/chart";
-import { MONTHS_FULL, MONTHS_SHORT, brl, brlCompactFmt, pct } from "../../lib/format";
+import { MONTHS_FULL, MONTHS_SHORT, brl, brlCompactFmt, dayMonth, pct } from "../../lib/format";
 
 const GAIN = "#0f7b5f";
 const MODES: { value: ChangeMode; label: string }[] = [
@@ -279,6 +279,61 @@ export function ParetoBlock({ d }: { d: SpendingResponse }) {
               </>
             );
           }}
+        </Async>
+      </div>
+    </Block>
+  );
+}
+
+// ---------------------------------------------------------------- o que ficou de fora das contas
+export function AuditBlock({ year }: { year: number }) {
+  const query = useFlowAudit(year);
+  return (
+    <Block
+      title="O que não entrou na conta de receitas e gastos"
+      intro="Mover dinheiro entre as suas contas, aplicar, resgatar ou pagar a fatura não é ganhar nem gastar. Confira aqui o que foi deixado de fora e por quê."
+    >
+      <div className={query.isPlaceholderData ? "opacity-60" : undefined}>
+        <Async query={query}>
+          {(a) => (
+            <>
+              <p className="num max-w-[68ch]">
+                Em {a.year} contaram como receita {brl(a.counted_income)} e como gasto {brl(a.counted_expense)}.
+                {a.day_trade_net !== 0 && (
+                  <> O day trade entra só pelo resultado líquido: {a.day_trade_net >= 0 ? "lucro" : "prejuízo"} de {brl(Math.abs(a.day_trade_net))} no ano.</>
+                )}
+              </p>
+              {a.groups.length === 0 ? (
+                <p className="mt-3 text-muted">Nada foi desconsiderado neste ano.</p>
+              ) : (
+                <div className="mt-4 space-y-3">
+                  {a.groups.map((g) => (
+                    <details key={g.reason} className="border-t border-line pt-3">
+                      <summary className="cursor-pointer">
+                        <span className="font-medium">{g.label}</span>
+                        <span className="num ml-2 text-muted">
+                          {g.count} lançamentos · entrou {brl(g.money_in)} · saiu {brl(g.money_out)}
+                        </span>
+                      </summary>
+                      <table className="num mt-2 w-full text-sm">
+                        <tbody>
+                          {g.examples.map((e, i) => (
+                            <tr key={`${e.date}-${i}`} className="border-b border-line/60">
+                              <td className="py-1 pr-3">{dayMonth(e.date)}</td>
+                              <td className="py-1 pr-3">{e.description}<span className="block text-xs text-muted">{e.account}</span></td>
+                              <td className="py-1 text-right">{e.amount >= 0 ? "+" : "−"}{brl(Math.abs(e.amount))}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      <p className="mt-1 text-xs text-muted">Os 5 maiores lançamentos do grupo.</p>
+                    </details>
+                  ))}
+                </div>
+              )}
+              <Notes items={a.warnings} />
+            </>
+          )}
         </Async>
       </div>
     </Block>

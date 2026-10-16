@@ -565,3 +565,29 @@ export interface NetWorthResponse {
   history: NetWorthPoint[];
   warnings: string[];
 }
+
+export interface AuditExample {
+  date: string;
+  description: string;
+  account: string;
+  amount: number;
+}
+
+export interface AuditGroup {
+  reason: string;
+  label: string;
+  count: number;
+  money_in: number;
+  money_out: number;
+  examples: AuditExample[];
+}
+
+export interface FlowAuditResponse {
+  year: number;
+  counted_income: number;
+  counted_expense: number;
+  groups: AuditGroup[];
+  day_trade_net: number;
+  own_names: string[];
+  warnings: string[];
+}
