@@ -25,7 +25,7 @@ import httpx
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.config import Settings, get_settings
+from app.core.config import Settings, get_settings, split_item_ids
 from app.database import AsyncSessionLocal
 from app.models import Account, Bill, Investment, Item, Loan, Transaction
 
@@ -740,24 +740,72 @@ class PluggySyncService:
 # ---------------------------------------------------------------------------
 # 7. Entrada de linha de comando / reuso pela API
 # ---------------------------------------------------------------------------
-async def run_sync(item_id: str | None = None, *, full_history: bool = False) -> SyncResult:
-    """Sincroniza usando as configurações do ``.env``."""
+@dataclass(slots=True)
+class SyncSummary:
+    """Resultado de sincronizar um ou mais itens; um item com falha não impede os outros."""
+
+    results: list[SyncResult] = field(default_factory=list)
+    errors: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def total(self) -> SyncResult:
+        total = SyncResult(item_id=", ".join(r.item_id for r in self.results))
+        for r in self.results:
+            total.accounts += r.accounts
+            total.transactions += r.transactions
+            total.bills += r.bills
+            total.investments += r.investments
+            total.loans += r.loans
+            total.warnings += [f"[{r.item_id[:8]}] {w}" for w in r.warnings] if len(self.results) > 1 else r.warnings
+        total.warnings += [f"Item {item}: {message}" for item, message in self.errors.items()]
+        if self.results:
+            total.started_at = min(r.started_at for r in self.results)
+            finished = [r.finished_at for r in self.results if r.finished_at]
+            total.finished_at = max(finished) if finished else None
+        return total
+
+
+async def sync_items(
+    service: PluggySyncService, item_ids: Sequence[str], *, full_history: bool = False
+) -> SyncSummary:
+    """Sincroniza os itens em sequência (a API da Pluggy limita a taxa); registra a falha de cada um."""
+    summary = SyncSummary()
+    for item_id in item_ids:
+        try:
+            summary.results.append(await service.sync_item(item_id, full_history=full_history))
+        except (PluggyAuthError, PluggyAPIError) as exc:
+            summary.errors[item_id] = str(exc)
+        except Exception as exc:  # um banco com problema não pode derrubar os demais
+            logger.exception("Falha inesperada no item %s", item_id)
+            summary.errors[item_id] = f"{type(exc).__name__}: {exc}"
+    return summary
+
+
+async def run_sync(
+    item_ids: str | Sequence[str] | None = None, *, full_history: bool = False
+) -> SyncSummary:
+    """Sincroniza os itens informados ou, sem argumento, todos os de ``PLUGGY_ITEM_ID`` (vários, separados por vírgula)."""
     settings = get_settings()
-    target = item_id or settings.pluggy_item_id
-    if not target:
+    if isinstance(item_ids, str):
+        item_ids = split_item_ids(item_ids)
+    targets = list(item_ids or settings.pluggy_item_ids)
+    if not targets:
         raise ValueError("Informe o itemId (argumento ou PLUGGY_ITEM_ID no .env).")
     async with PluggyClient(settings) as client:
         service = PluggySyncService(client, AsyncSessionLocal, settings)
-        return await service.sync_item(target, full_history=full_history)
+        return await sync_items(service, targets, full_history=full_history)
 
 
 def _main() -> None:
     parser = argparse.ArgumentParser(description="Sincroniza um item da Pluggy com o banco local.")
-    parser.add_argument("item_id", nargs="?", help="itemId (padrão: PLUGGY_ITEM_ID)")
+    parser.add_argument("item_ids", nargs="*", help="itemIds (padrão: os de PLUGGY_ITEM_ID)")
     parser.add_argument("--full", action="store_true", help="reimporta todo o histórico")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    print(asyncio.run(run_sync(args.item_id, full_history=args.full)).as_dict())
+    summary = asyncio.run(run_sync(args.item_ids or None, full_history=args.full))
+    print(summary.total.as_dict())
+    if summary.errors:
+        raise SystemExit(f"Falhas: {summary.errors}")
 
 
 if __name__ == "__main__":

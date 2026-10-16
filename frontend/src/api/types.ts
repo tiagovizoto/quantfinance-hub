@@ -325,10 +325,13 @@ export interface SyncResponse {
   warnings: string[];
   started_at: string;
   finished_at: string | null;
+  items: string[];
+  failed: Record<string, string>;
 }
 
 export interface SyncStatus {
   configured_item_id: string | null;
+  configured_item_ids: string[];
   items: {
     id: string;
     connector_name: string | null;

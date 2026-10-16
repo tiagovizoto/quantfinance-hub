@@ -73,13 +73,13 @@ quantfinance-hub/
 cd backend
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env                                  # preencha PLUGGY_CLIENT_ID/SECRET/ITEM_ID
+cp .env.example .env                                  # preencha PLUGGY_CLIENT_ID/SECRET/ITEM_ID (vários itens: separados por vírgula)
 alembic upgrade head
 uvicorn app.main:app --reload                         # API em http://localhost:8000/docs
 
 # sincronização via CLI (incremental; --full reimporta todo o histórico)
-python -m app.services.pluggy_service            # usa PLUGGY_ITEM_ID
-python -m app.services.pluggy_service <itemId> --full
+python -m app.services.pluggy_service            # sincroniza todos os itens de PLUGGY_ITEM_ID
+python -m app.services.pluggy_service <itemId> [<itemId> ...] --full
 ```
 
 ## Rodando o frontend
@@ -92,6 +92,15 @@ npm run build      # checagem de tipos + build de produção
 ```
 
 Suba o backend antes. O botão "Sincronizar agora" usa o `PLUGGY_ITEM_ID` do `.env`.
+
+### Vários bancos (MeuPluggy)
+No Pluggy Connect, ao escolher o MeuPluggy você ainda seleciona o banco, e **cada banco conectado gera um `itemId` próprio**. Repita o Connect para cada banco e coloque todos no `.env`, separados por vírgula:
+
+```
+PLUGGY_ITEM_ID=id-nubank,id-itau,id-inter
+```
+
+`POST /api/v1/sync` e o botão "Sincronizar agora" sincronizam todos em sequência. Se um banco falhar (conexão expirada, por exemplo), os outros continuam e a resposta lista os que falharam em `failed`. Para sincronizar um só: `POST /api/v1/sync/{itemId}`. Os `itemId` aparecem no painel da Pluggy (Items) e no retorno do evento `onSuccess` do Connect.
 
 ## Endpoints quantitativos (`/api/v1/quant`)
 

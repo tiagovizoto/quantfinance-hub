@@ -25,7 +25,8 @@ class ItemStatus(BaseModel):
 
 
 class SyncStatus(BaseModel):
-    configured_item_id: str | None
+    configured_item_id: str | None  # compatibilidade: o primeiro
+    configured_item_ids: list[str] = []
     items: list[ItemStatus]
 
 
@@ -38,15 +39,19 @@ async def _record_snapshot() -> None:
         logger.exception("Falha ao gravar o snapshot de patrimônio")
 
 
-async def _run(item_id: str | None, full_history: bool) -> SyncResponse:
+async def _run(item_ids: list[str] | None, full_history: bool) -> SyncResponse:
     try:
-        result = await run_sync(item_id, full_history=full_history)
+        summary = await run_sync(item_ids, full_history=full_history)
     except ValueError as exc:  # itemId ausente
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except (PluggyAuthError, PluggyAPIError) as exc:
+    except (PluggyAuthError, PluggyAPIError) as exc:  # falha ao abrir a sessão com a Pluggy
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    if not summary.results:  # todos falharam
+        raise HTTPException(status_code=502, detail="; ".join(f"{i}: {m}" for i, m in summary.errors.items()))
     await _record_snapshot()
-    return SyncResponse(**result.as_dict())
+    return SyncResponse(
+        **summary.total.as_dict(), items=[r.item_id for r in summary.results], failed=summary.errors
+    )
 
 
 @router.get("/status", response_model=SyncStatus)
@@ -56,7 +61,8 @@ async def sync_status(session: Annotated[AsyncSession, Depends(get_session)]) ->
 
     rows = (await session.scalars(select(Item).order_by(Item.last_synced_at.desc()))).all()
     return SyncStatus(
-        configured_item_id=get_settings().pluggy_item_id,
+        configured_item_id=(get_settings().pluggy_item_ids or [None])[0],
+        configured_item_ids=get_settings().pluggy_item_ids,
         items=[
             ItemStatus(
                 id=i.id, connector_name=i.connector_name, status=i.status, last_synced_at=i.last_synced_at
@@ -68,11 +74,11 @@ async def sync_status(session: Annotated[AsyncSession, Depends(get_session)]) ->
 
 @router.post("", response_model=SyncResponse)
 async def sync_configured_item(full_history: bool = False) -> SyncResponse:
-    """Sincroniza o item definido em PLUGGY_ITEM_ID."""
+    """Sincroniza todos os itens de PLUGGY_ITEM_ID (um por banco conectado)."""
     return await _run(None, full_history)
 
 
 @router.post("/{item_id}", response_model=SyncResponse)
 async def sync_item(item_id: str, full_history: bool = False) -> SyncResponse:
     """Sincroniza contas, transações, faturas, investimentos e empréstimos do item."""
-    return await _run(item_id, full_history)
+    return await _run([item_id], full_history)

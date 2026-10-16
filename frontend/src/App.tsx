@@ -66,8 +66,11 @@ function Header() {
               <span className="text-loss">Falha na sincronização: {sync.error.message}</span>
             ) : (
               <>
-                Importados {sync.data.accounts} contas, {sync.data.transactions} transações, {sync.data.investments}{" "}
-                investimentos e {sync.data.loans} empréstimos.
+                {sync.data.items.length > 1 ? `${sync.data.items.length} bancos: ` : ""}Importados {sync.data.accounts} contas,{" "}
+                {sync.data.transactions} transações, {sync.data.investments} investimentos e {sync.data.loans} empréstimos.
+                {Object.keys(sync.data.failed).length > 0 && (
+                  <span className="text-loss"> Falharam {Object.keys(sync.data.failed).length} item(ns): confira o aviso abaixo.</span>
+                )}
                 {sync.data.warnings.length > 0 && <span className="text-warn"> {sync.data.warnings.join(" ")}</span>}
               </>
             )}
