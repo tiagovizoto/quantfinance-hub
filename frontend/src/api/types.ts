@@ -343,3 +343,222 @@ export interface Assumptions {
   ipca_annual?: number;
   equity_return_annual?: number;
 }
+
+// ---------------------------------------------------------------- análises extras
+export interface CashEvent {
+  date: string;
+  label: string;
+  amount: number;
+  kind: "recurring" | "income" | "loan" | "card";
+}
+
+export interface CashPoint {
+  date: string;
+  base: number;
+  low: number;
+  high: number;
+}
+
+export interface CashForecastResponse {
+  as_of: string;
+  days: number;
+  starting_balance: number;
+  ending_balance: number;
+  min_balance: number;
+  min_date: string;
+  first_negative_base: string | null;
+  first_negative_low: string | null;
+  daily_variable_spend: number;
+  points: CashPoint[];
+  events: CashEvent[];
+  warnings: string[];
+}
+
+export interface PaceResponse {
+  as_of: string;
+  month_label: string;
+  day_of_month: number;
+  days: number[];
+  current: (number | null)[];
+  previous: number[];
+  average: number[];
+  previous_label: string | null;
+  months_in_average: number;
+  spent_to_date: number;
+  previous_to_date: number | null;
+  average_to_date: number | null;
+  projected_end: number | null;
+  typical_end: number | null;
+  previous_total: number | null;
+  warnings: string[];
+}
+
+export type ChangeMode = "previous_month" | "previous_year" | "average_6m";
+
+export interface CategoryChange {
+  category: string;
+  current: number;
+  base: number;
+  delta: number;
+  delta_pct: number | null;
+}
+
+export interface CategoryChangeResponse {
+  year: number;
+  month: number;
+  mode: ChangeMode;
+  current_label: string;
+  base_label: string;
+  current_total: number;
+  base_total: number;
+  rows: CategoryChange[];
+  warnings: string[];
+}
+
+export interface StructureMonth {
+  month: number;
+  fixed: number;
+  variable: number;
+  one_off: number;
+  total: number;
+}
+
+export interface StructureResponse {
+  year: number;
+  months: StructureMonth[];
+  fixed_total: number;
+  variable_total: number;
+  one_off_total: number;
+  fixed_share: number | null;
+  one_off_threshold: number;
+  fixed_items: string[];
+  warnings: string[];
+}
+
+export interface ParetoItem {
+  name: string;
+  total: number;
+  share: number;
+  cumulative: number;
+}
+
+export interface ParetoSeries {
+  items: ParetoItem[];
+  count: number;
+  n_for_50: number;
+  n_for_80: number;
+}
+
+export interface ConcentrationResponse {
+  year: number;
+  month: number | null;
+  expense_total: number;
+  categories: ParetoSeries;
+  merchants: ParetoSeries;
+  warnings: string[];
+}
+
+export interface PortfolioClass {
+  asset_class: string;
+  label: string;
+  value: number;
+  share: number;
+}
+
+export interface PortfolioPosition {
+  id: string;
+  name: string;
+  subtype: string | null;
+  asset_class: string;
+  value: number;
+  share: number;
+  indexer: string | null;
+  rate_pct: number | null;
+  rate_source: "realizada_12m" | "contratada" | "estimada";
+  spread_vs_cdi: number | null;
+  profit: number | null;
+  profit_pct: number | null;
+  due_date: string | null;
+  days_to_due: number | null;
+}
+
+export interface MaturityBucket {
+  month: string;
+  value: number;
+  items: string[];
+}
+
+export interface PortfolioResponse {
+  as_of: string;
+  total: number;
+  cdi_annual_pct: number;
+  by_class: PortfolioClass[];
+  positions: PortfolioPosition[];
+  maturities: MaturityBucket[];
+  matures_12m: number;
+  warnings: string[];
+}
+
+export interface InstallmentPurchase {
+  description: string;
+  account: string;
+  amount: number;
+  number: number;
+  total: number;
+  remaining: number;
+  remaining_total: number;
+  ends_on: string;
+}
+
+export interface InstallmentMonth {
+  month: string;
+  total: number;
+  count: number;
+}
+
+export interface InstallmentsResponse {
+  as_of: string;
+  months: InstallmentMonth[];
+  purchases: InstallmentPurchase[];
+  total_committed: number;
+  next_month: number;
+  warnings: string[];
+}
+
+export interface GraphNode {
+  id: string;
+  label: string;
+  kind: "income" | "account" | "category" | "merchant";
+  value: number;
+}
+
+export interface GraphLink {
+  source: string;
+  target: string;
+  value: number;
+}
+
+export interface MoneyGraphResponse {
+  year: number;
+  month: number | null;
+  nodes: GraphNode[];
+  links: GraphLink[];
+  expense_total: number;
+  income_total: number;
+  warnings: string[];
+}
+
+export interface NetWorthPoint {
+  day: string;
+  net_worth: number;
+  liquidity: number;
+  investments: number;
+  loans: number;
+  card_debt: number;
+}
+
+export interface NetWorthResponse {
+  current: NetWorthPoint;
+  history: NetWorthPoint[];
+  warnings: string[];
+}

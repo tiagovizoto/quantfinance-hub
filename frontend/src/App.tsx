@@ -7,19 +7,23 @@ import { Figure, FigureRow } from "./components/ui";
 import { brl, monthsText, pct, relativeTime } from "./lib/format";
 import { AnomaliesSection } from "./sections/AnomaliesSection";
 import { ArbitrageSection } from "./sections/ArbitrageSection";
+import { CashSection } from "./sections/CashSection";
 import { CashflowSection } from "./sections/CashflowSection";
 import { CreditRiskSection } from "./sections/CreditRiskSection";
 import { ExplorerSection } from "./sections/ExplorerSection";
 import { LoanStrategySection } from "./sections/LoanStrategySection";
 import { MonteCarloSection } from "./sections/MonteCarloSection";
+import { PortfolioSection } from "./sections/PortfolioSection";
 import { YearSection } from "./sections/YearSection";
 
 const NAV = [
   { href: "#ano", label: "Para onde foi" },
   { href: "#explorar", label: "Explorar" },
+  { href: "#caixa", label: "Caixa" },
   { href: "#fluxo", label: "Fluxo de caixa" },
   { href: "#gastos", label: "Gastos" },
   { href: "#projecao", label: "Projeção" },
+  { href: "#carteira", label: "Carteira" },
   { href: "#divida", label: "Dívida" },
   { href: "#quitacao", label: "Quitação" },
   { href: "#risco", label: "Risco" },
@@ -139,9 +143,11 @@ export default function App() {
         </div>
         <YearSection />
         <ExplorerSection onUseAsExtra={useAsExtra} />
+        <CashSection />
         <CashflowSection />
         <AnomaliesSection />
         <MonteCarloSection assumptions={assumptions} />
+        <PortfolioSection assumptions={assumptions} />
         <ArbitrageSection assumptions={assumptions} />
         <LoanStrategySection extra={extra} onExtraChange={setExtra} />
         <CreditRiskSection />

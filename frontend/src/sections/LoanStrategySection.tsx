@@ -15,7 +15,7 @@ import {
 } from "recharts";
 
 import { useLoanStrategy } from "../api/hooks";
-import type { LoanStrategyResponse, StrategyResult } from "../api/types";
+import type { LoanPlan, LoanStrategyResponse, StrategyResult } from "../api/types";
 import { ChartOrTable, Pills, TooltipBox } from "../components/chart";
 import type { TipProps } from "../components/chart";
 import { Async, Figure, FigureRow, Notes, Section } from "../components/ui";
@@ -360,6 +360,114 @@ function LoansTable({ d }: { d: LoanStrategyResponse }) {
   );
 }
 
+/** Grafo dirigido da bola de neve: quando uma dívida acaba, a parcela dela passa para a próxima da fila. */
+function DebtCascade({ d }: { d: LoanStrategyResponse }) {
+  const [key, setKey] = useState<"baseline" | "avalanche" | "snowball">(d.best_strategy ?? "avalanche");
+  const strategy = d.strategies.find((s) => s.key === key) ?? d.strategies[0];
+  if (!strategy || strategy.payoff_order.length === 0) return null;
+  const rolls = key !== "baseline";
+  const order = strategy.payoff_order
+    .map((step) => ({ step, loan: d.loans.find((l) => l.loan_id === step.loan_id), index: d.loans.findIndex((l) => l.loan_id === step.loan_id) }))
+    .filter((x): x is { step: typeof x.step; loan: LoanPlan; index: number } => x.loan !== undefined);
+  const W = 960;
+  const Y = 110;
+  const count = order.length + 1;
+  const gap = (W - 120) / (count - 1 || 1);
+  const maxBalance = Math.max(...order.map((x) => x.loan.balance), 1);
+  const x = (i: number) => 60 + i * gap;
+  const radius = (balance: number) => 14 + Math.sqrt(balance / maxBalance) * 30;
+  const maxFreed = Math.max(...order.map((x2) => x2.loan.installment_first), 1);
+
+  return (
+    <div className="mt-10">
+      <h3 className="text-xl">A cascata: uma dívida paga a próxima</h3>
+      <p className="num mt-1 max-w-[70ch] text-sm text-muted">
+        {rolls
+          ? "Cada vez que uma dívida acaba, a parcela dela não volta para o seu bolso: vai para a próxima da fila, que acaba mais rápido."
+          : "Sem estratégia, cada dívida só paga a própria parcela até acabar, e o dinheiro liberado não acelera as outras."}
+      </p>
+      <div className="mt-3">
+        <Pills label="Estratégia" small value={key} onChange={setKey} options={d.strategies.map((s) => ({ value: s.key, label: s.label }))} />
+      </div>
+      <div className="mt-3">
+        <ChartOrTable
+          label={`Ordem de quitação — ${strategy.label}`}
+          head={["Ordem", "Dívida", "Quita em", "Parcela liberada"]}
+          rows={order.map((o, i) => [i + 1, o.loan.name, `${monthLabel(o.step.on)} (mês ${o.step.month})`, brl(o.loan.installment_first)])}
+          chart={
+            <div className="overflow-x-auto">
+              <svg viewBox={`0 0 ${W} 230`} className="h-auto w-full min-w-[640px]" role="img" aria-label={`Ordem de quitação: ${order.map((o) => o.loan.name).join(", ")}, depois livre de dívidas.`}>
+                <defs>
+                  <marker id="cascade-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="12" markerHeight="12" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+                    <path d="M0,0 L10,5 L0,10 z" fill="#566370" />
+                  </marker>
+                </defs>
+                {order.map((o, i) => {
+                  const r = radius(o.loan.balance);
+                  const next = i < order.length - 1 ? radius(order[i + 1]!.loan.balance) : 18;
+                  const x1 = x(i) + r + 4;
+                  const x2 = x(i + 1) - next - 8;
+                  return (
+                    <g key={`edge-${o.loan.loan_id}`}>
+                      {(rolls || i === order.length - 1) && (
+                        <>
+                          <line
+                            x1={x1}
+                            x2={Math.max(x2, x1 + 12)}
+                            y1={Y}
+                            y2={Y}
+                            stroke="#566370"
+                            strokeWidth={1.5 + (o.loan.installment_first / maxFreed) * 5}
+                            strokeLinecap="round"
+                            markerEnd="url(#cascade-arrow)"
+                            opacity={0.65}
+                          />
+                          {rolls && i < order.length - 1 && (
+                            <text x={(x1 + x2) / 2} y={Y - 14} textAnchor="middle" fontSize={12} fill="#566370">
+                              libera {brlCompactFmt(o.loan.installment_first)}/mês
+                            </text>
+                          )}
+                        </>
+                      )}
+                    </g>
+                  );
+                })}
+                {order.map((o, i) => (
+                  <g key={o.loan.loan_id} transform={`translate(${x(i)},${Y})`}>
+                    <circle r={radius(o.loan.balance)} fill={LOAN_COLORS[o.index % LOAN_COLORS.length]} stroke="#fff" strokeWidth={1.5} />
+                    <text textAnchor="middle" dy="0.35em" fontSize={13} fontWeight={600} fill="#fff">
+                      {i + 1}
+                    </text>
+                    <text y={radius(o.loan.balance) + 20} textAnchor="middle" fontSize={13} fill="#1d2733">
+                      {o.loan.name.length > 20 ? `${o.loan.name.slice(0, 19)}…` : o.loan.name}
+                    </text>
+                    <text y={radius(o.loan.balance) + 38} textAnchor="middle" fontSize={12} fill="#566370">
+                      {brl(o.loan.balance)} · {monthLabel(o.step.on)}
+                    </text>
+                  </g>
+                ))}
+                <g transform={`translate(${x(order.length)},${Y})`}>
+                  <circle r={18} fill="#fff" stroke="#0f7b5f" strokeWidth={2.5} />
+                  <text textAnchor="middle" dy="0.35em" fontSize={16} fill="#0f7b5f">
+                    ✓
+                  </text>
+                  <text y={42} textAnchor="middle" fontSize={13} fill="#1d2733">
+                    Livre de dívidas
+                  </text>
+                  <text y={60} textAnchor="middle" fontSize={12} fill="#566370">
+                    {strategy.debt_free_on ? monthLabel(strategy.debt_free_on) : "—"}
+                  </text>
+                </g>
+              </svg>
+            </div>
+          }
+        />
+      </div>
+      <p className="mt-1 text-sm text-muted">O tamanho do círculo é o saldo atual; a espessura da seta, a parcela que passa adiante.</p>
+    </div>
+  );
+}
+
 function Body({ d }: { d: LoanStrategyResponse }) {
   if (d.loans.length === 0) {
     return (
@@ -373,6 +481,7 @@ function Body({ d }: { d: LoanStrategyResponse }) {
     <>
       <Strategies d={d} />
       <DebtCurve d={d} />
+      <DebtCascade d={d} />
       <CostBreakdown d={d} />
       <Timeline d={d} />
       <LoansTable d={d} />

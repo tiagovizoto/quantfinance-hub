@@ -9,6 +9,8 @@ import { Async, Figure, FigureRow, Notes, Section } from "../components/ui";
 import { AXIS_TICK, GRID, MUTED_BAR, SERIES_BLUE } from "../lib/chart";
 import { MONTHS_FULL, MONTHS_SHORT, brl, brlCompactFmt, dayMonth, fullDate, pct } from "../lib/format";
 import { SpendCalendar } from "./explorer/Calendar";
+import { CategoryChangeBlock, ParetoBlock, StructureBlock, Waterfall } from "./explorer/Insights";
+import { MoneyGraph } from "./explorer/MoneyGraph";
 
 const VISIBLE_CATEGORIES = 10;
 
@@ -485,6 +487,11 @@ function Body({
         <CategoryDetail category={active} d={d} />
       </div>
 
+      <Waterfall d={d} />
+      <MoneyGraph year={d.year} month={d.month} />
+      <CategoryChangeBlock d={d} />
+      <ParetoBlock d={d} />
+      <StructureBlock year={d.year} />
       <WhenSection d={d} />
       <RecurringBlock items={d.recurring} onUseAsExtra={onUseAsExtra} />
       <BiggestTransactions d={d} active={active.category} />

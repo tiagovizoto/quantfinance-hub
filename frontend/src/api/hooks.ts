@@ -5,7 +5,17 @@ import type {
   AnomaliesResponse,
   ArbitrageResponse,
   Assumptions,
+  CashForecastResponse,
   CashflowResponse,
+  CategoryChangeResponse,
+  ChangeMode,
+  ConcentrationResponse,
+  InstallmentsResponse,
+  MoneyGraphResponse,
+  NetWorthResponse,
+  PaceResponse,
+  PortfolioResponse,
+  StructureResponse,
   CreditRiskResponse,
   LoanStrategyResponse,
   MonteCarloResponse,
@@ -101,4 +111,63 @@ export function useSync() {
     mutationFn: () => request<SyncResponse>("/sync", { method: "POST" }),
     onSuccess: () => client.invalidateQueries(),
   });
+}
+
+// ---------------------------------------------------------------- análises extras
+const keep = { placeholderData: keepPreviousData, retry: shouldRetry } as const;
+
+export function useCashForecast() {
+  return useQuery({ queryKey: ["cash-forecast"], queryFn: () => request<CashForecastResponse>("/quant/cash-forecast"), retry: shouldRetry });
+}
+
+export function usePace() {
+  return useQuery({ queryKey: ["pace"], queryFn: () => request<PaceResponse>("/quant/pace"), retry: shouldRetry });
+}
+
+export function useInstallments() {
+  return useQuery({ queryKey: ["installments"], queryFn: () => request<InstallmentsResponse>("/quant/installments"), retry: shouldRetry });
+}
+
+export function useCategoryChange(year: number, month: number, mode: ChangeMode) {
+  return useQuery({
+    queryKey: ["category-change", year, month, mode],
+    queryFn: () => request<CategoryChangeResponse>(withQuery("/quant/category-change", { year, month, mode })),
+    ...keep,
+  });
+}
+
+export function useStructure(year: number) {
+  return useQuery({
+    queryKey: ["structure", year],
+    queryFn: () => request<StructureResponse>(withQuery("/quant/structure", { year })),
+    ...keep,
+  });
+}
+
+export function useConcentration(year: number, month: number | null) {
+  return useQuery({
+    queryKey: ["concentration", year, month],
+    queryFn: () => request<ConcentrationResponse>(withQuery("/quant/concentration", { year, month: month ?? undefined })),
+    ...keep,
+  });
+}
+
+export function useMoneyGraph(year: number, month: number | null) {
+  return useQuery({
+    queryKey: ["money-graph", year, month],
+    queryFn: () => request<MoneyGraphResponse>(withQuery("/quant/money-graph", { year, month: month ?? undefined })),
+    ...keep,
+  });
+}
+
+export function usePortfolio(assumptions: Assumptions) {
+  return useQuery({
+    queryKey: ["portfolio", assumptions],
+    queryFn: () => request<PortfolioResponse>(withQuery("/quant/portfolio", { ...assumptions })),
+    ...keep,
+  });
+}
+
+export function useNetWorth() {
+  return useQuery({ queryKey: ["net-worth"], queryFn: () => request<NetWorthResponse>("/quant/net-worth"), retry: shouldRetry });
 }

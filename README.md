@@ -27,7 +27,7 @@ quantfinance-hub/
 │   └── .env.example
 └── frontend/                    # React + Vite + TS + Tailwind v4 + Recharts
     ├── src/api/                 # client, hooks (React Query) e tipos espelhando os schemas
-    ├── src/sections/            # Para onde foi (ano), Explorar, Fluxo de caixa, Gastos, Projeção, Dívida, Quitação, Risco
+    ├── src/sections/            # Para onde foi (ano), Explorar, Caixa, Fluxo de caixa, Gastos, Projeção, Carteira, Dívida, Quitação, Risco
     ├── src/components/ui.tsx    # Section, Figure, Meter, estados de carga/erro
     └── vite.config.ts           # proxy /api -> http://localhost:8000
 ```
@@ -64,6 +64,17 @@ Suba o backend antes. O botão "Sincronizar agora" usa o `PLUGGY_ITEM_ID` do `.e
 |---|---|
 | `GET /year-summary?year=2026` | para onde foi o dinheiro no ano: totais, meses e categorias x mês (aceita qualquer ano com dados) |
 | `GET /spending?year=2026&month=9` | explorador de gastos: categorias (com comerciantes e maiores lançamentos), calendário diário, dia da semana, gastos recorrentes e maiores gastos avulsos; `month` vazio = ano todo |
+| `GET /cash-forecast?days=60` | saldo diário previsto (fixos, salário, parcelas, fatura, gasto variável) com faixa p10–p90 e primeiro dia negativo |
+| `GET /pace` | gasto acumulado do mês contra o mês passado e a média; fechamento projetado |
+| `GET /category-change?year=&month=&mode=` | variação por categoria (`previous_month`, `previous_year`, `average_6m`) |
+| `GET /structure?year=` | gasto mensal em fixo / variável / avulso |
+| `GET /concentration?year=&month=` | Pareto de categorias e estabelecimentos (quantos explicam 50% e 80%) |
+| `GET /portfolio` | composição, vencimentos, retorno x CDI por posição |
+| `GET /installments` | parcelas futuras de compras já feitas no cartão |
+| `GET /money-graph?year=&month=` | nós e ligações receita → conta → categoria → estabelecimento (grafo) |
+| `GET /net-worth` | patrimônio atual e histórico diário |
+
+O histórico de patrimônio é gravado (tabela `net_worth_snapshots`, migração `0002`) a cada sincronização; ele só existe a partir do primeiro sync depois de `alembic upgrade head`. Não há orçamento por categoria. A projeção de caixa e a detecção de gastos fixos são estimativas por padrão histórico.
 | `GET /loan-strategy?extra=500` | plano de quitação: avalanche (maior CET) x bola de neve (menor saldo) com valor extra mensal, linha do tempo das parcelas, dívida mês a mês e juros x principal de cada pagamento |
 | `GET /cashflow` | taxa de poupança, burn rate (diário/mensal), runway normal e estresse (+2σ) |
 | `GET /anomalies` | Z-score do gasto do mês por categoria vs. últimos 6 meses |
