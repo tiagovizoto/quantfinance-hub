@@ -14,6 +14,10 @@ alembic>=1.13,<2.0
 # --- Integração Pluggy ---
 httpx>=0.27,<1.0
 
+# --- Importação de extratos (OFX/CSV) ---
+python-multipart>=0.0.9,<1.0   # uploads (UploadFile/Form) no FastAPI
+ofxparse>=0.21,<1.0            # leitor de OFX (puxa beautifulsoup4 e lxml)
+
 # --- Motor quantitativo ---
 pandas>=2.2,<3.0
 numpy>=1.26,<3.0

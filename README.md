@@ -19,7 +19,9 @@ quantfinance-hub/
 │   │   ├── schemas/sync.py
 │   │   └── services/
 │   │       ├── pluggy_service.py  # cliente Pluggy + upsert
+│   │       ├── importer_service.py # importação de extratos OFX/CSV (idempotente)
 │   │       └── quant_engine.py    # métricas quantitativas
+│   ├── tests/                   # pytest (importador OFX/CSV)
 │   ├── requirements.txt
 │   ├── requirements-dev.txt
 │   └── .env.example
@@ -71,6 +73,31 @@ Suba o backend antes. O botão "Sincronizar agora" usa o `PLUGGY_ITEM_ID` do `.e
 Todas aceitam `as_of=YYYY-MM-DD`. Monte Carlo e arbitragem aceitam premissas de mercado por query string
 (`cdi_annual`, `ipca_annual`, `equity_return_annual`, ...; taxas em fração, ex.: `0.1365`).
 Documentação interativa em `/docs`.
+
+## Importação de extratos (`/api/v1/import`)
+
+Para contas ou cartões que ficaram fora da Pluggy. As linhas entram na mesma tabela `transactions`
+(`provider_code` = `import:ofx` ou `import:csv`) e aparecem em todas as análises.
+
+| Rota | Campos do formulário (`multipart/form-data`) |
+|---|---|
+| `POST /import/ofx` | `file` (.ofx/.qfx, uma conta por arquivo), `account_id`, `dry_run` |
+| `POST /import/csv` | `file` (.csv), `account_id`, `dry_run` e, só se a detecção errar: `date_column`, `description_column`, `amount_column`, `debit_column`, `credit_column`, `id_column`, `category_column`, `delimiter`, `decimal_separator`, `date_format`, `sign` |
+
+```bash
+# o account_id é o id da conta em `accounts` (veja GET em /docs ou o SQLite)
+curl -F "file=@extrato.ofx" -F account_id=SUA_CONTA http://localhost:8000/api/v1/import/ofx
+curl -F "file=@fatura.csv" -F account_id=SEU_CARTAO -F dry_run=true http://localhost:8000/api/v1/import/csv
+```
+
+- **Sem duplicar:** reenviar o mesmo arquivo (ou um que se sobreponha) insere só o que é novo. OFX usa `conta + FITID`; CSV
+  usa o identificador do banco se houver (Nubank) ou `data + valor + descrição` (sem acento/caixa), contando repetições
+  dentro do arquivo para não fundir duas compras iguais no mesmo dia.
+- **Sinal:** conta corrente = negativo é saída. Em **cartão**, o padrão é positivo = compra; se o seu CSV for o contrário,
+  envie `sign=as_is`. Use `dry_run=true` na primeira vez para conferir o que foi detectado.
+- Não importe, para a mesma conta, um extrato de um período que a Pluggy já sincroniza: os ids são diferentes e
+  as linhas apareceriam duas vezes.
+- Testes: `pip install -r requirements-dev.txt && pytest` (dentro de `backend/`).
 
 ## Migrar para PostgreSQL
 

@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routers import quant, sync
+from app.api.routers import importer, quant, sync
 from app.core.config import get_settings
 from app.database import dispose_engine
 
@@ -27,6 +27,7 @@ app.add_middleware(
 
 app.include_router(sync.router, prefix="/api/v1")
 app.include_router(quant.router, prefix="/api/v1")
+app.include_router(importer.router, prefix="/api/v1")
 
 
 @app.get("/health", tags=["infra"])
