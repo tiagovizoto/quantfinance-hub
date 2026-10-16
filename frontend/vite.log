@@ -1,0 +1,45 @@
+
+  VITE v8.3.4  ready in 442 ms
+
+  ➜  Local:   http://localhost:5173/
+  ➜  Network: use --host to expose
+8:58:33 AM [vite] (client) [console.warn] The width(0) and height(0) of chart should be greater than 0,
+       please check the style of container, or the props width(100%) and height(100%),
+       or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the
+       height and width.
+8:58:33 AM [vite] (client) [console.warn] The width(0) and height(0) of chart should be greater than 0,
+       please check the style of container, or the props width(100%) and height(100%),
+       or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the
+       height and width.
+8:58:33 AM [vite] (client) [console.warn] The width(0) and height(0) of chart should be greater than 0,
+       please check the style of container, or the props width(100%) and height(100%),
+       or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the
+       height and width.
+8:58:33 AM [vite] (client) [console.warn] The width(0) and height(0) of chart should be greater than 0,
+       please check the style of container, or the props width(100%) and height(100%),
+       or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the
+       height and width.
+8:58:34 AM [vite] (client) [console.warn] The width(0) and height(0) of chart should be greater than 0,
+       please check the style of container, or the props width(100%) and height(100%),
+       or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the
+       height and width.
+8:58:34 AM [vite] (client) [console.warn] The width(0) and height(0) of chart should be greater than 0,
+       please check the style of container, or the props width(100%) and height(100%),
+       or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the
+       height and width.
+8:58:34 AM [vite] (client) [console.warn] The width(0) and height(0) of chart should be greater than 0,
+       please check the style of container, or the props width(100%) and height(100%),
+       or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the
+       height and width.
+8:58:34 AM [vite] (client) [console.warn] The width(0) and height(0) of chart should be greater than 0,
+       please check the style of container, or the props width(100%) and height(100%),
+       or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the
+       height and width.
+8:58:42 AM [vite] (client) hmr update /src/sections/YearSection.tsx, /src/index.css
+8:58:43 AM [vite] (client) hmr update /src/sections/YearSection.tsx, /src/index.css
+8:58:44 AM [vite] (client) hmr update /src/sections/YearSection.tsx, /src/index.css
+8:58:45 AM [vite] (client) hmr update /src/sections/YearSection.tsx, /src/index.css
+8:58:45 AM [vite] (client) hmr update /src/sections/YearSection.tsx, /src/index.css
+8:58:48 AM [vite] (client) hmr update /src/sections/YearSection.tsx, /src/index.css
+8:58:50 AM [vite] (client) hmr update /src/sections/YearSection.tsx, /src/index.css
+8:59:08 AM [vite] (client) hmr update /src/sections/YearSection.tsx, /src/index.css

@@ -1,0 +1,56 @@
+INFO:     Started server process [304]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:60414 - "GET /api/v1/sync/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60430 - "GET /api/v1/quant/cashflow HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60476 - "GET /api/v1/quant/arbitrage HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60436 - "GET /api/v1/quant/credit-risk HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60466 - "GET /api/v1/quant/anomalies HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60454 - "GET /api/v1/quant/year-summary?year=2026 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60452 - "GET /api/v1/quant/monte-carlo?seed=42 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36556 - "GET /api/v1/quant/year-summary?year=2025 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36572 - "GET /api/v1/sync/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36622 - "GET /api/v1/quant/anomalies HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36588 - "GET /api/v1/quant/cashflow HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36608 - "GET /api/v1/quant/year-summary?year=2026 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36602 - "GET /api/v1/quant/credit-risk HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36630 - "GET /api/v1/quant/arbitrage HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36592 - "GET /api/v1/quant/monte-carlo?seed=42 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36640 - "GET /api/v1/quant/year-summary?year=2025 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47076 - "GET /api/v1/sync/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47102 - "GET /api/v1/quant/anomalies HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47058 - "GET /api/v1/quant/cashflow HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47090 - "GET /api/v1/quant/year-summary?year=2026 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47072 - "GET /api/v1/quant/credit-risk HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47110 - "GET /api/v1/quant/arbitrage HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47060 - "GET /api/v1/quant/monte-carlo?seed=42 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47114 - "GET /api/v1/quant/year-summary?year=2025 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47118 - "GET /api/v1/sync/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47176 - "GET /api/v1/quant/anomalies HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47138 - "GET /api/v1/quant/cashflow HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47148 - "GET /api/v1/quant/year-summary?year=2026 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47160 - "GET /api/v1/quant/credit-risk HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47186 - "GET /api/v1/quant/arbitrage HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47134 - "GET /api/v1/quant/monte-carlo?seed=42 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47200 - "GET /api/v1/quant/year-summary?year=2025 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59368 - "GET /api/v1/sync/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59400 - "GET /api/v1/quant/year-summary?year=2026 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59402 - "GET /api/v1/quant/anomalies HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59358 - "GET /api/v1/quant/cashflow HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59416 - "GET /api/v1/quant/arbitrage HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59382 - "GET /api/v1/quant/monte-carlo?seed=42 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59386 - "GET /api/v1/quant/credit-risk HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59420 - "GET /api/v1/quant/year-summary?year=2025 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59432 - "GET /api/v1/sync/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59438 - "GET /api/v1/quant/cashflow HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59462 - "GET /api/v1/quant/anomalies HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59460 - "GET /api/v1/quant/year-summary?year=2026 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59476 - "GET /api/v1/quant/arbitrage HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59446 - "GET /api/v1/quant/credit-risk HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59444 - "GET /api/v1/quant/monte-carlo?seed=42 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59478 - "GET /api/v1/quant/year-summary?year=2025 HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [304]
