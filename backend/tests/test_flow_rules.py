@@ -227,3 +227,21 @@ async def test_salary_account_transfer_counts_as_income(session: AsyncSession, b
     await session.commit()
     flows = await QuantEngine(session)._load_flows(datetime(2026, 10, 1), datetime(2026, 11, 1))
     assert flows["income"].sum() == 3900 and (flows["reason"] != "").sum() == 0
+
+
+def test_detected_own_names_ignore_recharge_and_cash_withdrawals() -> None:
+    import pandas as pd
+
+    from app.services.flow_rules import detect_own_names
+
+    rows = ["Recarga - TIM"] * 3 + ["SAQUE BANCO 24H - SAQUE BANCO 24H"] * 3 + ["Pix enviado - Tiago Carneiro Vizoto"] * 2
+    frame = pd.DataFrame({"category": ["Same person transfer"] * 8, "description": rows})
+    assert detect_own_names(frame, lambda t: t.lower()) == ["tiago carneiro vizoto"]
+
+
+async def test_bank_same_person_category_on_recharge_or_cash_still_counts(session: AsyncSession, bank_id: str) -> None:
+    tx(session, bank_id, 2, 30, "DEBIT", "Same person transfer", "Recarga - TIM")
+    tx(session, bank_id, 3, 500, "DEBIT", "Same person transfer - CASH", "SAQUE BANCO 24H - SAQUE BANCO 24H")
+    await session.commit()
+    flows = await QuantEngine(session)._load_flows(datetime(2026, 10, 1), datetime(2026, 11, 1))
+    assert flows["expense"].sum() == 530

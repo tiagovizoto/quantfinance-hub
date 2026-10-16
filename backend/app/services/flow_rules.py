@@ -76,7 +76,8 @@ def detect_own_names(frame: pd.DataFrame, normalize) -> list[str]:
         if match:
             name = _squash(match.group(1), normalize)
             counts[name] = counts.get(name, 0) + 1
-    return [name for name, n in counts.items() if n >= 2]
+    # Só nomes completos: "Recarga - TIM" ou "SAQUE BANCO 24H" também vêm marcados pelo banco e não são pessoas.
+    return [name for name, n in counts.items() if n >= 2 and len(name.split()) >= 2 and not any(ch.isdigit() for ch in name)]
 
 
 def own_name_mask(

@@ -144,7 +144,12 @@ def classify_flows(
         ("investimento", flow_rules._contains(text, flow_rules.INVESTMENT_MARKERS)),
         (
             "propria",
-            flow_rules._contains(text, flow_rules.OWN_TRANSFER_MARKERS)
+            # a categoria "Same person transfer" do banco também vem em recarga de celular e saque:
+            # só vale quando a descrição é mesmo uma transferência.
+            (
+                flow_rules._contains(text, flow_rules.OWN_TRANSFER_MARKERS)
+                & out["description"].fillna("").map(lambda t: bool(flow_rules._TRANSFER_WORDS.search(_norm(t))))
+            )
             | flow_rules.own_name_mask(
                 out["description"],
                 [*own_names, *flow_rules.detect_own_names(out, _norm)],
