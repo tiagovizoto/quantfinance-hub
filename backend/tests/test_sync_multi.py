@@ -7,6 +7,7 @@ from app.api.routers import sync as sync_router
 from app.core.config import Settings, split_item_ids
 from app.services.pluggy_service import (
     PluggyAPIError,
+    PluggyAuthError,
     SyncResult,
     SyncSummary,
     sync_items,
@@ -75,3 +76,10 @@ async def test_endpoint_502_when_every_item_fails(client: httpx.AsyncClient, fak
     fake_run(SyncSummary(errors={"a": "erro 1", "b": "erro 2"}))
     response = await client.post("/api/v1/sync")
     assert response.status_code == 502 and "erro 1" in response.json()["detail"]
+
+
+async def test_auth_failure_stops_after_the_first_item() -> None:
+    service = FakeService({"a": PluggyAuthError("401")})
+    with pytest.raises(PluggyAuthError):
+        await sync_items(service, ["a", "b", "c"])  # type: ignore[arg-type]
+    assert service.calls == ["a"]

@@ -165,8 +165,8 @@ class PluggyClient:
         async with self._auth_lock:
             if not force and self._api_key and time.monotonic() < self._api_key_expires_at:
                 return
-            client_id = self._settings.pluggy_client_id
-            client_secret = self._settings.pluggy_client_secret.get_secret_value()
+            client_id = self._settings.pluggy_client_id.strip().strip("\"'")
+            client_secret = self._settings.pluggy_client_secret.get_secret_value().strip().strip("\"'")
             if not client_id or not client_secret:
                 raise PluggyAuthError("PLUGGY_CLIENT_ID / PLUGGY_CLIENT_SECRET não configurados.")
             try:
@@ -177,7 +177,11 @@ class PluggyClient:
                 raise PluggyAuthError(f"Falha de rede ao autenticar na Pluggy: {exc!r}") from exc
             if response.status_code != 200:
                 raise PluggyAuthError(
-                    f"Autenticação recusada pela Pluggy (HTTP {response.status_code})."
+                    f"Autenticação recusada pela Pluggy (HTTP {response.status_code}): "
+                    "confira PLUGGY_CLIENT_ID e PLUGGY_CLIENT_SECRET no .env (copie de novo em "
+                    "dashboard.pluggy.ai > Aplicações; sem espaços ou aspas; o secret é mostrado só na criação). "
+                    f"CLIENT_ID lido: {client_id[:8]}… ({len(client_id)} caracteres), "
+                    f"SECRET com {len(client_secret)} caracteres."
                 )
             api_key = response.json().get("apiKey")
             if not api_key:
@@ -773,7 +777,9 @@ async def sync_items(
     for item_id in item_ids:
         try:
             summary.results.append(await service.sync_item(item_id, full_history=full_history))
-        except (PluggyAuthError, PluggyAPIError) as exc:
+        except PluggyAuthError:
+            raise  # credenciais inválidas valem para todos os itens: falhar uma vez, com a mensagem clara
+        except PluggyAPIError as exc:
             summary.errors[item_id] = str(exc)
         except Exception as exc:  # um banco com problema não pode derrubar os demais
             logger.exception("Falha inesperada no item %s", item_id)
